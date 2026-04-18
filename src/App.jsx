@@ -2430,7 +2430,7 @@ function MineOpsApp() {
   const [customMachines,setCustomMachines]=useState([])
   const [customCatData,setCustomCatData]=useState([])
   const [custPerfData,setCustPerfData]=useState({})
-  useEffect(()=>{ if(session&&flow==="onboarding") setFlow("login") },[session])
+  useEffect(()=>{ if(session&&flow==="onboarding"&&activeMine) setFlow("login") },[session])
   const allMachines=[...BASE_MACHINES,...customMachines]
   const catDemo=[...Object.entries(CAT_DEMO).map(([id,data])=>({id,meta:BASE_MACHINES.find(m=>m.id===id),data})),...customCatData]
   const lv=ROLES[user?.role]?.level||1
