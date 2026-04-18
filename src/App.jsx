@@ -13,7 +13,7 @@ function AuthProvider({ children }) {
 }
 function useSupabase() { return useContext(AuthCtx) }
 
-const{useState,useRef,useEffect}=React;
+import { useRef } from "react";
 
 
 // ── Design tokens ─────────────────────────────────────────────────────────
@@ -1816,7 +1816,7 @@ function SubscriptionScreen({mineName,onSelect}){
         </div>
         {p.features.map((f,i)=><div key={i} style={{display:"flex",gap:8,marginBottom:4,alignItems:"flex-start"}}><span style={{color:p.color,flexShrink:0,marginTop:1}}>✓</span><span style={{fontSize:12,color:selected===p.id?C.text:C.textSub}}>{f}</span></div>)}
         {p.limits.map((f,i)=><div key={i} style={{display:"flex",gap:8,marginBottom:4,alignItems:"flex-start"}}><span style={{color:C.muted,flexShrink:0}}>·</span><span style={{fontSize:11,color:C.muted}}>{f}</span></div>)}
-      )}
+      </div>)}
       <button onClick={()=>onSelect(selected)} style={{width:"100%",background:`linear-gradient(135deg,${C.accent},#d4881e)`,color:"#000",border:"none",borderRadius:14,padding:"17px",fontFamily:F,fontWeight:900,fontSize:20,cursor:"pointer",marginBottom:10}}>
         Start 14-Day Free Trial →
       </button>
