@@ -850,7 +850,7 @@ function ScoopLoggerScreen({user}){
 }
 
 // ── Machine Check ──────────────────────────────────────────────────────────
-function MachineCheckScreen({allMachines,catDemo}){
+function MachineCheckScreen({allMachines,catDemo,activeMine,activeShiftId,user}){
   const[sel,setSel]=useState(null);const[checks,setChecks]=useState({});const[done,setDone]=useState({});const[fuel,setFuel]=useState("");const[fuelErr,setFuelErr]=useState("");
   const count=id=>Object.values(checks[id]||{}).filter(Boolean).length;const allDone=id=>PRESTART.every(c=>(checks[id]||{})[c.id]);
   const handleFuel=v=>{setFuel(v);const n=parseInt(v);if(v==="")return setFuelErr("");if(isNaN(n)||n<1||n>100)return setFuelErr("Enter 1–100%");setFuelErr("");};
@@ -864,7 +864,23 @@ function MachineCheckScreen({allMachines,catDemo}){
         {viewingPhoto&&<PhotoViewer guide={viewingPhoto} machineType={allMachines.find(x=>x.id===sel)?.type||"Wheel Loader"} onClose={()=>setViewingPhoto(null)}/>}
         <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:12,padding:"4px 14px",marginTop:13,marginBottom:14}}>{PRESTART.map(c=>{const mt=allMachines.find(x=>x.id===sel)?.type||"Wheel Loader";const tk=mt==="Haul Truck"?"truck":"loader";const hp=!!(PHOTO_GUIDES[tk]?.[c.id]);return <CkRow key={c.id} label={c.label} checked={(checks[sel]||{})[c.id]||false} onChange={()=>setChecks(p=>({...p,[sel]:{...(p[sel]||{}),[c.id]:!(p[sel]||{})[c.id]}}))} checkId={c.id} machineType={mt} onPhoto={hp?id=>setViewingPhoto(id):null}/>;})}</div>
         <div style={{marginBottom:16}}><div style={{fontSize:12,color:C.muted,marginBottom:6}}>Fuel level (%)<span style={{color:C.danger}}> *</span></div><input type="number" placeholder="e.g. 78" value={fuel} onChange={e=>handleFuel(e.target.value)} style={{background:C.surface,color:C.text,border:`1px solid ${fuelErr?C.danger:parseInt(fuel)>=1&&parseInt(fuel)<=100?C.success:C.border}`,borderRadius:9,padding:"13px 14px",fontSize:16,width:"100%",outline:"none"}}/>{fuelErr&&<div style={{fontSize:11,color:C.danger,marginTop:4}}>{fuelErr}</div>}</div>
-        <button onClick={()=>{if(can)setDone(p=>({...p,[sel]:true}));}} style={{width:"100%",background:can?C.success:C.border,color:can?"#000":C.muted,border:"none",borderRadius:12,padding:"15px",fontFamily:F,fontWeight:900,fontSize:18,cursor:can?"pointer":"default",transition:"background .2s"}}>{can?"✅ SIGN OFF":"Complete all items + valid fuel level"}</button>
+        <button onClick={async()=>{
+          if(!can)return;
+          setDone(p=>({...p,[sel]:true}));
+          if(activeMine?.id&&activeShiftId&&user?.id){
+            try{
+              await supabase.from("prestart_logs").insert({
+                mine_id:activeMine.id,
+                shift_id:activeShiftId,
+                machine_id:sel,
+                operator_id:user.id,
+                checks_passed:checks[sel]||{},
+                fuel_level:parseInt(fuel)||null,
+                signed_off_at:new Date().toISOString(),
+              });
+            }catch(e){console.error("prestart_log insert:",e);}
+          }
+        }} style={{width:"100%",background:can?C.success:C.border,color:can?"#000":C.muted,border:"none",borderRadius:12,padding:"15px",fontFamily:F,fontWeight:900,fontSize:18,cursor:can?"pointer":"default",transition:"background .2s"}}>{can?"✅ SIGN OFF":"Complete all items + valid fuel level"}</button>
       </div>}
     </div>;
   }
@@ -1479,10 +1495,10 @@ function MaintenanceScreen({allMachines}){
 }
 
 // ── Checks hub ─────────────────────────────────────────────────────────────
-function ChecksHub({allMachines,catDemo}){
+function ChecksHub({allMachines,catDemo,activeMine,activeShiftId,user}){
   const[active,setActive]=useState(null);
   const Bk=()=><button onClick={()=>setActive(null)} style={{margin:"10px 16px 0",background:"none",border:`1px solid ${C.border}`,borderRadius:7,padding:"5px 13px",color:C.muted,fontSize:11,fontFamily:F,fontWeight:700,cursor:"pointer",display:"block"}}>← Back</button>;
-  if(active==="machine")    return <div><Bk/><MachineCheckScreen allMachines={allMachines} catDemo={catDemo}/></div>;
+  if(active==="machine")    return <div><Bk/><MachineCheckScreen allMachines={allMachines} catDemo={catDemo} activeMine={activeMine} activeShiftId={activeShiftId} user={user}/></div>;
   if(active==="site")       return <div><Bk/><SiteCheckScreen/></div>;
   if(active==="diag")       return <div><Bk/><DiagnosticsScreen allMachines={allMachines} catDemo={catDemo}/></div>;
   if(active==="maintenance")return <MaintenanceScreen allMachines={allMachines} catDemo={catDemo}/>;
@@ -2677,7 +2693,7 @@ function MineOpsApp() {
     if(flow==="inspHistory")return <PreshiftHistoryScreen mineId={activeMine?.id} onBack={()=>setFlow("app")}/>
     if(flow==="settings")return <SettingsScreen onClose={()=>setFlow("app")}/>
     if(tab==="ops"&&lv===1)return <ScoopLoggerScreen user={user}/>
-    if(tab==="checks")return <ChecksHub allMachines={allMachines} catDemo={catDemo}/>
+    if(tab==="checks")return <ChecksHub allMachines={allMachines} catDemo={catDemo} activeMine={activeMine} activeShiftId={activeShiftId} user={user}/>
     if(tab==="perf")return <MachinePerformanceScreen allMachines={allMachines} custPerfData={custPerfData}/>
     if(tab==="intel")return <IntelligenceHub/>
     if(tab==="comply")return <ComplianceHub/>
