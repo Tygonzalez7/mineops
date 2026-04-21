@@ -530,7 +530,17 @@ function SinglePreStart({machineId,catDemo,allMachines,onDone}){
   </div>;
 }
 
-function MachineSelectScreen({allMachines,catDemo,onComplete}){
+function MachineSelectScreen({allMachines,catDemo,onComplete,isAdmin,onAddMachine}){
+  if(!allMachines||allMachines.length===0){
+    return <div style={{minHeight:"70vh",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:"32px 24px",textAlign:"center"}}>
+      <div style={{fontSize:52,marginBottom:12,opacity:.7}}>🏗</div>
+      <div style={{fontFamily:F,fontWeight:900,fontSize:22,color:C.text,marginBottom:6}}>No machines yet</div>
+      <div style={{fontSize:13,color:C.muted,lineHeight:1.5,marginBottom:20,maxWidth:280}}>
+        {isAdmin?"Add your first machine to start pre-shift checks and production tracking.":"Your admin hasn't set up machines yet. Check back soon."}
+      </div>
+      {isAdmin&&<button onClick={onAddMachine} style={{background:C.accent,color:"#000",border:"none",borderRadius:12,padding:"14px 22px",fontFamily:F,fontWeight:900,fontSize:16,cursor:"pointer"}}>+ Add Machine</button>}
+    </div>;
+  }
   const[selected,setSelected]=useState([]);const[checking,setChecking]=useState(null);const[completed,setCompleted]=useState({});const[confirmed,setConfirmed]=useState(false);
   const allChecked=selected.length>0&&selected.every(id=>completed[id]);
   if(checking)return <SinglePreStart machineId={checking} catDemo={catDemo} onDone={d=>{setCompleted(p=>({...p,[d.machineId]:d}));setChecking(null);}}/>;
@@ -2438,25 +2448,42 @@ function JoinMineFlow({onComplete,onBack}){
   </div>;
 }
 
-function Login({onLogin,mine}){
-  const ops=USERS.filter(u=>u.role==="operator"),mgmt=USERS.filter(u=>u.role!=="operator");
-  return <div style={{minHeight:"100vh",display:"flex",flexDirection:"column",justifyContent:"center",padding:"24px 18px"}} className="up">
-    <div style={{textAlign:"center",marginBottom:26}}>
+function Login({onLogin,mine,onBack}){
+  const[email,setEmail]=useState("");
+  const[pass,setPass]=useState("");
+  const[loading,setLoading]=useState(false);
+  const[err,setErr]=useState("");
+  const emailOk=/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+  const passOk=pass.length>=6;
+  const inp={background:C.surface,color:C.text,border:`1px solid ${C.border}`,borderRadius:9,padding:"12px 14px",fontSize:15,width:"100%",outline:"none",marginBottom:10};
+  const go=async()=>{
+    if(!emailOk||!passOk)return;
+    setLoading(true);setErr("");
+    try{
+      const {data,error}=await supabase.auth.signInWithPassword({email,password:pass});
+      if(error)throw error;
+      onLogin(data.session);
+    }catch(e){
+      console.error("signIn failed:",e);
+      setErr(e.message||"Sign-in failed.");
+    }finally{setLoading(false);}
+  };
+  return <div style={{minHeight:"100vh",display:"flex",flexDirection:"column",justifyContent:"center",padding:"28px 20px"}} className="up">
+    <div style={{textAlign:"center",marginBottom:24}}>
       <div style={{fontFamily:F,fontWeight:900,fontSize:44,color:C.accent,letterSpacing:".06em"}}>MINEOPS</div>
-      {mine?<div style={{fontFamily:F,fontWeight:700,fontSize:16,color:C.text,marginTop:4}}>{mine.name||mine.mineName}</div>:<div style={{fontSize:9,color:C.muted,letterSpacing:".2em",textTransform:"uppercase",marginTop:5}}>DEMO MODE</div>}
-      <div style={{display:"flex",gap:8,justifyContent:"center",marginTop:10}}>{OP.crushers.map(c=><div key={c.id} style={{background:`${C.accent}18`,border:`1px solid ${C.accent}33`,borderRadius:7,padding:"4px 11px",fontSize:11,color:C.accent,fontFamily:F,fontWeight:700}}>{c.name} · {c.capacityTph} t/hr</div>)}</div>
+      {mine?<div style={{fontFamily:F,fontWeight:700,fontSize:16,color:C.text,marginTop:4}}>{mine.name||mine.mineName}</div>:null}
     </div>
-    <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:14,padding:"14px 14px 8px",marginBottom:10}}>
-      <div style={{fontSize:9,color:C.muted,fontFamily:F,fontWeight:700,letterSpacing:".1em",marginBottom:10}}>👷 OPERATORS</div>
-      {ops.map(u=><button key={u.id} onClick={()=>onLogin(u)} style={{width:"100%",background:C.surface,border:`1px solid ${C.border}`,borderRadius:10,padding:"11px 12px",marginBottom:8,color:C.text,display:"flex",alignItems:"center",gap:11,textAlign:"left",cursor:"pointer"}}><div style={{width:40,height:40,borderRadius:"50%",background:`${ROLES[u.role]?.color}22`,border:`2px solid ${ROLES[u.role]?.color}55`,display:"flex",alignItems:"center",justifyContent:"center",fontFamily:F,fontWeight:700,fontSize:15,color:ROLES[u.role]?.color,flexShrink:0}}>{u.avatar}</div><div style={{flex:1}}><div style={{fontFamily:F,fontWeight:700,fontSize:14}}>{u.name}</div><div style={{fontSize:10,color:C.muted}}>{u.employeeId}{u.machine?` · ${u.machine}`:""}</div></div><span style={{color:C.muted,fontSize:14}}>→</span></button>)}
-    </div>
-    <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:14,padding:"14px 14px 8px"}}>
-      <div style={{fontSize:9,color:C.muted,fontFamily:F,fontWeight:700,letterSpacing:".1em",marginBottom:10}}>🔶 MANAGEMENT</div>
-      {mgmt.map(u=><button key={u.id} onClick={()=>onLogin(u)} style={{width:"100%",background:C.surface,border:`1px solid ${C.border}`,borderRadius:10,padding:"11px 12px",marginBottom:8,color:C.text,display:"flex",alignItems:"center",gap:11,textAlign:"left",cursor:"pointer"}}><div style={{width:40,height:40,borderRadius:"50%",background:`${ROLES[u.role]?.color}22`,border:`2px solid ${ROLES[u.role]?.color}55`,display:"flex",alignItems:"center",justifyContent:"center",fontFamily:F,fontWeight:700,fontSize:15,color:ROLES[u.role]?.color,flexShrink:0}}>{u.avatar}</div><div style={{flex:1}}><div style={{fontFamily:F,fontWeight:700,fontSize:14}}>{u.name}</div><div style={{fontSize:10,color:C.muted}}>{u.employeeId} · {ROLES[u.role]?.label}</div></div><span style={{color:C.muted,fontSize:14}}>→</span></button>)}
-    </div>
+    <div style={{fontSize:12,color:C.muted,marginBottom:5}}>Email</div>
+    <input type="email" autoCapitalize="none" value={email} onChange={e=>setEmail(e.target.value)} placeholder="you@company.com.au" style={{...inp,border:`1px solid ${emailOk?C.success:C.border}`}}/>
+    <div style={{fontSize:12,color:C.muted,marginBottom:5}}>Password</div>
+    <input type="password" value={pass} onChange={e=>setPass(e.target.value)} onKeyDown={e=>e.key==="Enter"&&go()} placeholder="••••••••" style={{...inp,border:`1px solid ${passOk?C.success:C.border}`}}/>
+    {err&&<div style={{background:`${C.danger}15`,border:`1px solid ${C.danger}44`,borderRadius:10,padding:"10px 12px",marginBottom:10,fontSize:12,color:C.danger}}>{err}</div>}
+    <button disabled={loading||!emailOk||!passOk} onClick={go} style={{width:"100%",background:loading?C.border:(emailOk&&passOk?C.accent:C.border),color:loading?C.muted:(emailOk&&passOk?"#000":C.muted),border:"none",borderRadius:12,padding:"15px",fontFamily:F,fontWeight:900,fontSize:18,cursor:loading?"default":"pointer",marginTop:6}}>
+      {loading?"Signing in…":"Sign In →"}
+    </button>
+    {onBack&&<button onClick={onBack} style={{width:"100%",background:"none",border:"none",color:C.muted,padding:"12px",fontFamily:F,fontWeight:700,fontSize:13,cursor:"pointer",marginTop:4}}>← Back</button>}
   </div>;
 }
-
 function TruckQuestion({user,onAnswer}){
   return <div style={{minHeight:"100vh",display:"flex",flexDirection:"column",justifyContent:"center",padding:"28px 20px"}} className="up">
     <div style={{textAlign:"center",marginBottom:32}}><div style={{fontFamily:F,fontWeight:900,fontSize:28,color:C.text}}>G'day, {user.name.split(" ")[0]}</div><div style={{fontFamily:F,fontWeight:700,fontSize:18,color:C.muted,marginTop:10,lineHeight:1.4}}>Did you drive a company<br/>vehicle to site today?</div></div>
@@ -2491,14 +2518,82 @@ function MineOpsApp() {
   const [customMachines,setCustomMachines]=useState([])
   const [customCatData,setCustomCatData]=useState([])
   const [custPerfData,setCustPerfData]=useState({})
-  useEffect(()=>{ if(session&&flow==="onboarding"&&activeMine) setFlow("login") },[session])
-  const allMachines=[...BASE_MACHINES,...customMachines]
+  // Load the user's operator profile + mine whenever session changes
+  useEffect(()=>{
+    let cancelled=false;
+    async function loadProfile(){
+      if(!session){setUser(null);return;}
+      try{
+        const {data,error}=await supabase
+          .from("operators")
+          .select("id,name,role,status,machine_id,crusher_assigned,employee_id,auth_id,mine_id,mines(id,name,code,location,plan)")
+          .eq("auth_id",session.user.id)
+          .maybeSingle();
+        if(error)throw error;
+        if(cancelled)return;
+        if(!data){
+          // Signed in but no operator row yet — stay on onboarding so they can create/join a mine
+          return;
+        }
+        // Shape the user to mimic the BASE_USERS format the rest of the app expects
+        const u={
+          id:data.id,
+          name:data.name,
+          role:data.role,
+          machine:data.machine_id||undefined,
+          crusherAssigned:data.crusher_assigned||undefined,
+          employeeId:data.employee_id||data.id.slice(0,8).toUpperCase(),
+          avatar:(data.name||"?").split(" ").map(p=>p[0]).join("").slice(0,2).toUpperCase(),
+          status:data.status,
+        };
+        setUser(u);
+        if(data.mines){setActiveMine(data.mines);}
+        // If still on onboarding/login screens, advance into the app
+        setFlow(f=>((f==="onboarding"||f==="login")?"truckQ":f));
+      }catch(e){console.error("loadProfile failed:",e);}
+    }
+    loadProfile();
+    return()=>{cancelled=true;};
+  },[session])
+  // When we have a real mine, load its machines + operators from Supabase.
+  // Otherwise (demo mode) fall back to BASE_MACHINES + hardcoded USERS.
+  const[remoteMachines,setRemoteMachines]=useState(null)
+  const[remoteOperators,setRemoteOperators]=useState(null)
+  useEffect(()=>{
+    let cancelled=false;
+    if(!activeMine?.id){setRemoteMachines(null);setRemoteOperators(null);return;}
+    (async()=>{
+      try{
+        const [mRes,oRes]=await Promise.all([
+          supabase.from("machines").select("*").eq("mine_id",activeMine.id),
+          supabase.from("operators").select("id,name,role,status,machine_id,crusher_assigned,employee_id").eq("mine_id",activeMine.id),
+        ]);
+        if(cancelled)return;
+        if(!mRes.error)setRemoteMachines(mRes.data||[]);
+        if(!oRes.error)setRemoteOperators(oRes.data||[]);
+      }catch(e){console.error("load mine data failed:",e);}
+    })();
+    return()=>{cancelled=true;};
+  },[activeMine?.id,customMachines.length])
+  // Machines: Supabase when real mine, BASE when demo
+  const allMachines=activeMine?.id
+    ?[...(remoteMachines||[]),...customMachines]
+    :[...BASE_MACHINES,...customMachines]
   const catDemo=[...Object.entries(CAT_DEMO).map(([id,data])=>({id,meta:BASE_MACHINES.find(m=>m.id===id),data})),...customCatData]
   const lv=ROLES[user?.role]?.level||1
-  const handleLogin=u=>{setUser(u);setFlow("truckQ")}
+  const handleLogin=()=>{ /* session is already set by AuthProvider; loadProfile effect handles the rest */ }
   const handleTruck=drove=>{if(drove)setFlow("truckCheck");else setFlow(lv===1?"machines":"app")}
-  const handleAddMachine=(machine,catData)=>{setCustomMachines(p=>[...p,machine]);setCustomCatData(p=>[...p,{id:machine.id,meta:machine,data:catData}]);setCustPerfData(p=>({...p,[machine.id]:[]}))}
-  const handleSignOut=async()=>{await supabase.auth.signOut();setUser(null);setFlow("onboarding");setTab("board");setShowSignOut(false);setMenuOpen(false);setActiveMine(null)}
+  const handleAddMachine=async(machine,catData)=>{
+    setCustomMachines(p=>[...p,machine]);
+    setCustomCatData(p=>[...p,{id:machine.id,meta:machine,data:catData}]);
+    setCustPerfData(p=>({...p,[machine.id]:[]}));
+    if(activeMine?.id){
+      try{
+        await supabase.from("machines").insert({mine_id:activeMine.id,...machine,...(catData?{telematics:catData}:{})});
+      }catch(e){console.error("persist machine failed:",e);}
+    }
+  }
+  const handleSignOut=async()=>{await supabase.auth.signOut();setUser(null);setActiveMine(null);setRemoteMachines(null);setRemoteOperators(null);setFlow("onboarding");setTab("board");setShowSignOut(false);setMenuOpen(false);}
   const screen=()=>{
     if(flow==="vehicleCheck")return <TruckCheckScreen onComplete={()=>setFlow("app")}/>
     if(flow==="addMachine")return <AddMachineScreen allMachines={allMachines} onAdd={handleAddMachine} onBack={()=>setFlow("app")}/>
@@ -2523,7 +2618,7 @@ function MineOpsApp() {
     {flow==="login"&&<div style={{flex:1,overflowY:"auto"}}><Login onLogin={handleLogin} mine={activeMine}/></div>}
     {flow==="truckQ"&&<div style={{flex:1,overflowY:"auto"}}><TruckQuestion user={user} onAnswer={handleTruck}/></div>}
     {flow==="truckCheck"&&<div style={{flex:1,overflowY:"auto"}}><TruckCheckScreen onComplete={()=>setFlow(lv===1?"machines":"app")}/></div>}
-    {flow==="machines"&&<div style={{flex:1,overflowY:"auto"}}><MachineSelectScreen allMachines={allMachines} catDemo={catDemo} onComplete={()=>setFlow("app")}/></div>}
+    {flow==="machines"&&<div style={{flex:1,overflowY:"auto"}}><MachineSelectScreen allMachines={allMachines} catDemo={catDemo} isAdmin={user?.role==="admin"} onAddMachine={()=>setFlow("addMachine")} onComplete={()=>setFlow("app")}/></div>}
     {(flow==="app"||flow==="vehicleCheck"||flow==="addMachine"||flow==="photoManager"||flow==="settings")&&<>
       <div style={{flexShrink:0,background:`${C.surface}f2`,backdropFilter:"blur(10px)",borderBottom:`1px solid ${C.border}`,padding:"9px 15px",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
         <div style={{display:"flex",alignItems:"center",gap:10}}>
