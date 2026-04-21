@@ -2441,6 +2441,63 @@ function JoinMineFlow({onComplete,onBack}){
   </div>;
 }
 
+
+function PreshiftHistoryScreen({mineId,onBack}){
+  const[logs,setLogs]=useState(null);
+  const[err,setErr]=useState("");
+  useEffect(()=>{
+    let cancelled=false;
+    (async()=>{
+      try{
+        const {data,error}=await supabase
+          .from("prestart_logs")
+          .select("id,machine_id,operator_id,checks_passed,signed_off_at,fuel_level,operators(name),shifts(shift_type,shift_start)")
+          .eq("mine_id",mineId)
+          .order("signed_off_at",{ascending:false})
+          .limit(200);
+        if(error)throw error;
+        if(!cancelled)setLogs(data||[]);
+      }catch(e){console.error("history load:",e);if(!cancelled)setErr(e.message||"Load failed");}
+    })();
+    return()=>{cancelled=true;};
+  },[mineId]);
+  // Group by date
+  const grouped={};
+  (logs||[]).forEach(l=>{
+    const d=l.signed_off_at?new Date(l.signed_off_at).toLocaleDateString():"Unknown";
+    if(!grouped[d])grouped[d]=[];
+    grouped[d].push(l);
+  });
+  return <div style={{padding:"0 0 30px"}}>
+    <PageHdr title="Inspection History" sub="Pre-shift logs · last 200" back onBack={onBack}/>
+    <div style={{padding:"4px 16px"}}>
+      {err&&<div style={{background:`${C.danger}15`,border:`1px solid ${C.danger}44`,borderRadius:10,padding:"10px 12px",marginBottom:12,fontSize:12,color:C.danger}}>{err}</div>}
+      {logs===null&&<div style={{textAlign:"center",padding:"40px 0",color:C.muted,fontSize:13}}>Loading…</div>}
+      {logs!==null&&logs.length===0&&<div style={{textAlign:"center",padding:"40px 20px"}}>
+        <div style={{fontSize:44,marginBottom:10,opacity:.6}}>📋</div>
+        <div style={{fontFamily:F,fontWeight:900,fontSize:18,color:C.text,marginBottom:4}}>No inspections yet</div>
+        <div style={{fontSize:12,color:C.muted}}>Completed pre-shifts will appear here</div>
+      </div>}
+      {Object.keys(grouped).map(d=><div key={d} style={{marginBottom:16}}>
+        <div style={{fontFamily:F,fontWeight:700,fontSize:11,color:C.muted,letterSpacing:".12em",textTransform:"uppercase",marginBottom:8}}>{d}</div>
+        {grouped[d].map(l=>{
+          const passed=Object.values(l.checks_passed||{}).filter(Boolean).length;
+          const total=Object.keys(l.checks_passed||{}).length;
+          const ok=passed===total&&total>0;
+          const t=l.signed_off_at?new Date(l.signed_off_at).toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"}):"";
+          return <div key={l.id} style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:10,padding:"11px 13px",marginBottom:6}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:3}}>
+              <div style={{fontFamily:F,fontWeight:900,fontSize:14,color:C.text}}>{l.machine_id}</div>
+              <div style={{fontSize:10,fontFamily:F,fontWeight:700,color:ok?C.success:C.amber,background:ok?`${C.success}15`:`${C.amber}15`,border:`1px solid ${ok?C.success:C.amber}44`,borderRadius:6,padding:"2px 7px"}}>{passed}/{total||"?"} {ok?"✓":"!"}</div>
+            </div>
+            <div style={{fontSize:11,color:C.muted}}>{l.operators?.name||"—"} · {l.shifts?.shift_type||"—"} shift · {t}</div>
+          </div>;
+        })}
+      </div>)}
+    </div>
+  </div>;
+}
+
 function Login({onLogin,mine,onBack}){
   const[email,setEmail]=useState("");
   const[pass,setPass]=useState("");
@@ -2509,6 +2566,7 @@ function MineOpsApp() {
   const [showSignOut,setShowSignOut]=useState(false)
   const [menuOpen,setMenuOpen]=useState(false)
   const [customMachines,setCustomMachines]=useState([])
+  const [activeShiftId,setActiveShiftId]=useState(null)
   const [customCatData,setCustomCatData]=useState([])
   const [custPerfData,setCustPerfData]=useState({})
   // Load the user's operator profile + mine whenever session changes
@@ -2585,7 +2643,22 @@ function MineOpsApp() {
   const catDemo=[...Object.entries(CAT_DEMO).map(([id,data])=>({id,meta:BASE_MACHINES.find(m=>m.id===id),data})),...customCatData]
   const lv=ROLES[user?.role]?.level||1
   const handleLogin=()=>{ /* session is already set by AuthProvider; loadProfile effect handles the rest */ }
-  const handleTruck=drove=>{if(drove)setFlow("truckCheck");else setFlow(lv===1?"machines":"app")}
+  const ensureShift=async(truckDriven)=>{
+    if(!user?.id||!activeMine?.id||activeShiftId)return activeShiftId;
+    const hr=new Date().getHours();
+    const shiftType=(hr>=6&&hr<18)?"day":"night";
+    try{
+      const {data,error}=await supabase.from("shifts").insert({
+        operator_id:user.id,mine_id:activeMine.id,
+        shift_start:new Date().toISOString(),status:"active",
+        truck_driven:!!truckDriven,shift_type:shiftType,
+      }).select().single();
+      if(error)throw error;
+      setActiveShiftId(data.id);
+      return data.id;
+    }catch(e){console.error("ensureShift failed:",e);return null;}
+  }
+  const handleTruck=async drove=>{await ensureShift(drove);if(drove)setFlow("truckCheck");else setFlow(lv===1?"machines":"app")}
   const handleAddMachine=async(machine,catData)=>{
     setCustomMachines(p=>[...p,machine]);
     setCustomCatData(p=>[...p,{id:machine.id,meta:machine,data:catData}]);
@@ -2596,11 +2669,12 @@ function MineOpsApp() {
       }catch(e){console.error("persist machine failed:",e);}
     }
   }
-  const handleSignOut=async()=>{await supabase.auth.signOut();setUser(null);setActiveMine(null);setRemoteMachines(null);setRemoteOperators(null);setFlow("onboarding");setTab("board");setShowSignOut(false);setMenuOpen(false);}
+  const handleSignOut=async()=>{await supabase.auth.signOut();setUser(null);setActiveMine(null);setRemoteMachines(null);setRemoteOperators(null);setActiveShiftId(null);setFlow("onboarding");setTab("board");setShowSignOut(false);setMenuOpen(false);}
   const screen=()=>{
     if(flow==="vehicleCheck")return <TruckCheckScreen onComplete={()=>setFlow("app")}/>
     if(flow==="addMachine")return <AddMachineScreen allMachines={allMachines} onAdd={handleAddMachine} onBack={()=>setFlow("app")}/>
     if(flow==="photoManager")return <PhotoManagerScreen/>
+    if(flow==="inspHistory")return <PreshiftHistoryScreen mineId={activeMine?.id} onBack={()=>setFlow("app")}/>
     if(flow==="settings")return <SettingsScreen onClose={()=>setFlow("app")}/>
     if(tab==="ops"&&lv===1)return <ScoopLoggerScreen user={user}/>
     if(tab==="checks")return <ChecksHub allMachines={allMachines} catDemo={catDemo}/>
@@ -2612,8 +2686,8 @@ function MineOpsApp() {
   }
   return <div style={{maxWidth:420,margin:"0 auto",height:"100vh",display:"flex",flexDirection:"column",background:C.bg,position:"relative",overflow:"hidden"}}>
     {showSignOut&&<SignOutConfirm onConfirm={handleSignOut} onCancel={()=>setShowSignOut(false)}/>}
-    {menuOpen&&<MenuOverlay user={user} allMachines={allMachines} onNav={t=>{setTab(t);setFlow("app")}} onAddMachine={()=>setFlow("addMachine")} onVehicleCheck={()=>setFlow("vehicleCheck")} onClose={()=>setMenuOpen(false)}/>}
-    {user&&!["onboarding","createMine","joinMine","subscription","vlSetup","login","app","vehicleCheck","addMachine","photoManager","settings"].includes(flow)&&
+    {menuOpen&&<MenuOverlay user={user} allMachines={allMachines} onNav={t=>{setTab(t);setFlow("app")}} onAddMachine={()=>setFlow("addMachine")} onVehicleCheck={()=>setFlow("vehicleCheck")} onInspHistory={()=>{setFlow("inspHistory");setMenuOpen(false)}} onClose={()=>setMenuOpen(false)}/>}
+    {user&&!["onboarding","createMine","joinMine","subscription","vlSetup","login","app","vehicleCheck","addMachine","photoManager","settings","inspHistory"].includes(flow)&&
       <div style={{flexShrink:0,background:`${C.surface}f2`,backdropFilter:"blur(10px)",borderBottom:`1px solid ${C.border}`,padding:"9px 15px",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
         <div style={{display:"flex",alignItems:"center",gap:10}}>
           <button onClick={()=>setMenuOpen(true)} style={{background:"none",border:`1px solid ${C.border}`,borderRadius:8,padding:"5px 10px",color:C.muted,fontSize:16,cursor:"pointer",lineHeight:1}}>☰</button>
@@ -2630,7 +2704,7 @@ function MineOpsApp() {
     {flow==="truckQ"&&<div style={{flex:1,overflowY:"auto"}}><TruckQuestion user={user} onAnswer={handleTruck}/></div>}
     {flow==="truckCheck"&&<div style={{flex:1,overflowY:"auto"}}><TruckCheckScreen onComplete={()=>setFlow(lv===1?"machines":"app")}/></div>}
     {flow==="machines"&&<div style={{flex:1,overflowY:"auto"}}><MachineSelectScreen allMachines={allMachines} catDemo={catDemo} isAdmin={user?.role==="admin"} onAddMachine={()=>setFlow("addMachine")} onComplete={()=>setFlow("app")}/></div>}
-    {(flow==="app"||flow==="vehicleCheck"||flow==="addMachine"||flow==="photoManager"||flow==="settings")&&<>
+    {(flow==="app"||flow==="vehicleCheck"||flow==="addMachine"||flow==="photoManager"||flow==="settings"||flow==="inspHistory")&&<>
       <div style={{flexShrink:0,background:`${C.surface}f2`,backdropFilter:"blur(10px)",borderBottom:`1px solid ${C.border}`,padding:"9px 15px",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
         <div style={{display:"flex",alignItems:"center",gap:10}}>
           <button onClick={()=>setMenuOpen(true)} style={{background:"none",border:`1px solid ${C.border}`,borderRadius:8,padding:"5px 10px",color:C.muted,fontSize:16,cursor:"pointer",lineHeight:1}}>☰</button>
