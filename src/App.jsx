@@ -2195,7 +2195,7 @@ const DEMO_MINES=[
   {id:"mine_003",name:"Blue Hills Aggregates",code:"BLUE44", location:"New South Wales, AU",machines:5,operators:9, plan:"pro"},
 ];
 
-function OnboardingScreen({onEnterDemo,onJoinMine,onCreateMine}){
+function OnboardingScreen({onEnterDemo,onJoinMine,onCreateMine,onSignIn}){
   return <div style={{minHeight:"100vh",display:"flex",flexDirection:"column",justifyContent:"space-between",padding:"40px 22px 32px"}} className="up">
     <div style={{textAlign:"center"}}>
       <div style={{fontFamily:F,fontWeight:900,fontSize:52,color:C.accent,letterSpacing:".06em",marginBottom:6}}>MINEOPS</div>
@@ -2216,6 +2216,7 @@ function OnboardingScreen({onEnterDemo,onJoinMine,onCreateMine}){
       <button onClick={onEnterDemo} style={{width:"100%",background:"transparent",border:`1px solid ${C.border}`,borderRadius:12,padding:"12px",fontFamily:F,fontWeight:700,fontSize:14,color:C.muted,cursor:"pointer"}}>
         Try Demo →
       </button>
+      <div style={{textAlign:"center",marginTop:18,fontSize:13,color:C.muted}}>Already have an account? <span onClick={onSignIn} style={{color:C.accent,fontFamily:F,fontWeight:700,cursor:"pointer",textDecoration:"underline"}}>Sign in</span></div>
     </div>
     <div style={{textAlign:"center",fontSize:10,color:C.muted,lineHeight:1.6}}>
       MineOps · MQSHA 1999 / Reg 2017 · CAT VisionLink AEMP 2.0<br/>
