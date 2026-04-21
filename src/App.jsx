@@ -2524,30 +2524,40 @@ function MineOpsApp() {
     async function loadProfile(){
       if(!session){setUser(null);return;}
       try{
-        const {data,error}=await supabase
+        // Two separate queries — avoids the embedded join 500 error
+        const {data:op,error:opErr}=await supabase
           .from("operators")
-          .select("id,name,role,status,machine_id,crusher_assigned,employee_id,auth_id,mine_id,mines(id,name,code,location,plan)")
+          .select("id,name,role,status,machine_id,crusher_assigned,employee_id,auth_id,mine_id")
           .eq("auth_id",session.user.id)
           .maybeSingle();
-        if(error)throw error;
+        if(opErr)throw opErr;
         if(cancelled)return;
-        if(!data){
+        if(!op){
           // Signed in but no operator row yet — stay on onboarding so they can create/join a mine
           return;
         }
+        let mineRow=null;
+        if(op.mine_id){
+          const {data:m,error:mErr}=await supabase
+            .from("mines")
+            .select("id,name,code,location,plan")
+            .eq("id",op.mine_id)
+            .maybeSingle();
+          if(!mErr)mineRow=m;
+        }
         // Shape the user to mimic the BASE_USERS format the rest of the app expects
         const u={
-          id:data.id,
-          name:data.name,
-          role:data.role,
-          machine:data.machine_id||undefined,
-          crusherAssigned:data.crusher_assigned||undefined,
-          employeeId:data.employee_id||data.id.slice(0,8).toUpperCase(),
-          avatar:(data.name||"?").split(" ").map(p=>p[0]).join("").slice(0,2).toUpperCase(),
-          status:data.status,
+          id:op.id,
+          name:op.name,
+          role:op.role,
+          machine:op.machine_id||undefined,
+          crusherAssigned:op.crusher_assigned||undefined,
+          employeeId:op.employee_id||op.id.slice(0,8).toUpperCase(),
+          avatar:(op.name||"?").split(" ").map(p=>p[0]).join("").slice(0,2).toUpperCase(),
+          status:op.status,
         };
         setUser(u);
-        if(data.mines){setActiveMine(data.mines);}
+        if(mineRow){setActiveMine(mineRow);}
         // If still on onboarding/login screens, advance into the app
         setFlow(f=>((f==="onboarding"||f==="login")?"truckQ":f));
       }catch(e){console.error("loadProfile failed:",e);}
