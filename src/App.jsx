@@ -2629,7 +2629,7 @@ function MineOpsApp() {
         </div>
         <button onClick={()=>setShowSignOut(true)} style={{background:"none",border:"none",color:C.muted,fontSize:12,fontFamily:F,fontWeight:700,cursor:"pointer"}}>Sign out</button>
       </div>}
-    {flow==="onboarding"&&<div style={{flex:1,overflowY:"auto"}}><OnboardingScreen onEnterDemo={()=>setFlow("login")} onCreateMine={()=>setFlow("createMine")} onJoinMine={()=>setFlow("joinMine")}/></div>}
+    {flow==="onboarding"&&<div style={{flex:1,overflowY:"auto"}}><OnboardingScreen onEnterDemo={()=>setFlow("login")} onCreateMine={()=>setFlow("createMine")} onJoinMine={()=>setFlow("joinMine")} onSignIn={()=>setFlow("login")}/></div>}
     {flow==="createMine"&&<div style={{flex:1,overflowY:"auto"}}><CreateMineFlow onComplete={m=>{setActiveMine(m);setPendingMine(m);setFlow("subscription")}} onBack={()=>setFlow("onboarding")}/></div>}
     {flow==="joinMine"&&<div style={{flex:1,overflowY:"auto"}}><JoinMineFlow onComplete={m=>{setActiveMine(m.mine);setFlow("login")}} onBack={()=>setFlow("onboarding")}/></div>}
     {flow==="subscription"&&<div style={{flex:1,overflowY:"auto"}}><SubscriptionScreen mineName={pendingMine?.mineName||"Your Mine"} onSelect={()=>setFlow("vlSetup")}/></div>}
