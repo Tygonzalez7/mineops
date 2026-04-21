@@ -2416,7 +2416,7 @@ function JoinMineFlow({onComplete,onBack}){
         if(siErr)throw siErr;
         const {error:opErr}=await supabase.from("operators").insert({
           auth_id:auth.user.id,mine_id:foundMine.id,name,role,
-          machine_id:role==="operator"?machine:null,status:"pending",
+          machine_id:role==="operator"?machine:null,status:"active",
         });
         if(opErr)throw opErr;
         setStep(4);
@@ -2438,12 +2438,12 @@ function JoinMineFlow({onComplete,onBack}){
       <div style={{fontFamily:F,fontWeight:700,fontSize:13,color:C.success,marginBottom:10}}>Account created ✓</div>
       {[`Name: ${name}`,`Mine: ${foundMine?.name}`,`Role: ${ROLES[role]?.label}`,role==="operator"?`Machine: ${BASE_MACHINES.find(m=>m.id===machine)?.model||"—"}`:"Access: All shift data"].map((s,i)=><div key={i} style={{fontSize:12,color:C.muted,marginBottom:4}}>· {s}</div>)}
     </div>
-    <div style={{background:`${C.amber}10`,border:`1px solid ${C.amber}33`,borderRadius:12,padding:"12px 14px",marginBottom:20}}>
-      <div style={{fontFamily:F,fontWeight:700,fontSize:13,color:C.amber,marginBottom:4}}>⏳ Awaiting admin approval</div>
-      <div style={{fontSize:11,color:C.muted,lineHeight:1.5}}>Your Mine Admin will receive a notification and approve your access. You'll get an email when you're in. Usually happens within 24 hours.</div>
+    <div style={{background:`${C.success}10`,border:`1px solid ${C.success}33`,borderRadius:12,padding:"12px 14px",marginBottom:20}}>
+      <div style={{fontFamily:F,fontWeight:700,fontSize:13,color:C.success,marginBottom:4}}>✓ You're in</div>
+      <div style={{fontSize:11,color:C.muted,lineHeight:1.5}}>You now have access to {foundMine?.name}. Tap below to get started.</div>
     </div>
     <button onClick={()=>onComplete({name,email,role,machine,mine:foundMine})} style={{width:"100%",background:C.accent,color:"#000",border:"none",borderRadius:14,padding:"15px",fontFamily:F,fontWeight:900,fontSize:18,cursor:"pointer"}}>
-      Enter Demo Mode →
+      Enter MineOps →
     </button>
   </div>;
 }
