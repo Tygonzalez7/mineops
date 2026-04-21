@@ -580,7 +580,6 @@ function AddMachineScreen({onAdd,onBack}){
   const[type,setType]=useState(MACHINE_TYPES[0]);
   const[bucket,setBucket]=useState("");
   const[serial,setSerial]=useState("");
-  const[status,setStatus]=useState("standby");
   const[crusher,setCrusher]=useState("C1");
   const[done,setDone]=useState(false);
   const[addedMachine,setAddedMachine]=useState(null);
@@ -593,7 +592,7 @@ function AddMachineScreen({onAdd,onBack}){
     if(!can)return;
     const id=`CUSTOM_${Date.now()}`;
     const newM={id,model:model.trim(),type,bucket:bucket?parseFloat(bucket):null,crusherAssigned:crusher==="None"?null:crusher,custom:true};
-    const newCat={sn:serial.trim()||`CUSTOM-${Date.now()}`,smh:0,fuel:100,engineTemp:0,status,faults:[],utilToday:0};
+    const newCat={sn:serial.trim()||`CUSTOM-${Date.now()}`,smh:0,fuel:100,engineTemp:0,status:"standby",faults:[],utilToday:0};
     onAdd(newM,newCat);
     setAddedMachine(newM);
     setDone(true);
@@ -612,23 +611,16 @@ function AddMachineScreen({onAdd,onBack}){
     <div style={{paddingBottom:30}}>
       <PageHdr title="Add Machine" sub="Add to fleet — available at next pre-start" back onBack={onBack}/>
       <div style={{padding:"16px 16px"}}>
-        <div style={{background:`${C.accent}08`,border:`1px solid ${C.accent}22`,borderRadius:10,padding:"11px 14px",marginBottom:16}}>
-          <div style={{fontSize:11,color:C.accent,fontFamily:F,fontWeight:700,marginBottom:2}}>DEMO MODE</div>
-          <div style={{fontSize:12,color:C.muted}}>Machine is added to local fleet only. Data is not persisted between sessions.</div>
-        </div>
-
         <label style={lbl}>Machine model <span style={{color:C.danger}}>*</span></label>
         <input value={model} onChange={e=>setModel(e.target.value)} placeholder="e.g. CAT 777F, Komatsu PC1250, Liebherr T 264" style={{...inp,marginBottom:14,border:`1px solid ${model?C.success:C.border}`}}/>
 
         <label style={lbl}>Machine type <span style={{color:C.danger}}>*</span></label>
         <select value={type} onChange={e=>setType(e.target.value)} style={{...sel,marginBottom:14}}>
-          {MACHINE_TYPES.map(t=><option key={t}>{t}</option>)}
+          {["Wheel Loader","Excavator","Haul Truck","Dozer","Drill","Grader","Roller","Crusher","Screen","Water Cart","Service Truck","Light Vehicle"].map(t=><option key={t}>{t}</option>)}
         </select>
 
-        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:14}}>
-          <div><label style={lbl}>Bucket / blade size (t)</label><input type="number" value={bucket} onChange={e=>setBucket(e.target.value)} placeholder="e.g. 8.5" style={inp}/></div>
-          <div><label style={lbl}>Status</label><select value={status} onChange={e=>setStatus(e.target.value)} style={sel}><option value="operating">Operating</option><option value="standby">Standby</option><option value="maintenance">Maintenance</option></select></div>
-        </div>
+        <label style={lbl}>Bucket / blade size (yd³)</label>
+        <input type="number" value={bucket} onChange={e=>setBucket(e.target.value)} placeholder="e.g. 8.5" style={{...inp,marginBottom:14}}/>
 
         <label style={lbl}>Serial number <span style={{color:C.danger}}>*</span></label>
         <input value={serial} onChange={e=>setSerial(e.target.value)} placeholder="e.g. KAT00777F0006" style={{...inp,marginBottom:14,border:`1px solid ${serial?C.success:C.border}`}}/>
@@ -2638,7 +2630,7 @@ function MineOpsApp() {
     {flow==="truckQ"&&<div style={{flex:1,overflowY:"auto"}}><TruckQuestion user={user} onAnswer={handleTruck}/></div>}
     {flow==="truckCheck"&&<div style={{flex:1,overflowY:"auto"}}><TruckCheckScreen onComplete={()=>setFlow(lv===1?"machines":"app")}/></div>}
     {flow==="machines"&&<div style={{flex:1,overflowY:"auto"}}><MachineSelectScreen allMachines={allMachines} catDemo={catDemo} isAdmin={user?.role==="admin"} onAddMachine={()=>setFlow("addMachine")} onComplete={()=>setFlow("app")}/></div>}
-    {(flow==="app"||flow==="vehicleCheck"||flow==="addMachine"||flow==="photoManager"||flow==="settings")&&<>
+    {(flow==="app"||flow==="vehicleCheck"||flow==="photoManager"||flow==="settings")&&<>
       <div style={{flexShrink:0,background:`${C.surface}f2`,backdropFilter:"blur(10px)",borderBottom:`1px solid ${C.border}`,padding:"9px 15px",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
         <div style={{display:"flex",alignItems:"center",gap:10}}>
           <button onClick={()=>setMenuOpen(true)} style={{background:"none",border:`1px solid ${C.border}`,borderRadius:8,padding:"5px 10px",color:C.muted,fontSize:16,cursor:"pointer",lineHeight:1}}>☰</button>
