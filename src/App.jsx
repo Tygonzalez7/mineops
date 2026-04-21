@@ -2292,6 +2292,9 @@ function CreateMineFlow({onComplete,onBack}){
         });
         if (authErr) throw authErr;
         if (!auth?.user) throw new Error("Sign-up returned no user");
+        // Force a session so auth.uid() is set for the inserts below
+        const { error: siErr } = await supabase.auth.signInWithPassword({ email, password: pass });
+        if (siErr) throw siErr;
         const { data: mine, error: mineErr } = await supabase.from("mines").insert({
           name: mineName, location, code, plan: "starter", owner_id: auth.user.id,
         }).select().single();
