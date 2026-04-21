@@ -2322,14 +2322,25 @@ function JoinMineFlow({onComplete,onBack}){
   const[foundMine,setFoundMine]=useState(null);const[searchErr,setSearchErr]=useState("");
   const[name,setName]=useState("");const[email,setEmail]=useState("");const[pass,setPass]=useState("");
   const[role,setRole]=useState(null);const[machine,setMachine]=useState(null);
+  const[searchLoading,setSearchLoading]=useState(false);
+  const[joining,setJoining]=useState(false);
+  const[joinErr,setJoinErr]=useState("");
   const emailOk=/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
   const passOk=pass.length>=8;
   const inp={background:C.surface,color:C.text,border:`1px solid ${C.border}`,borderRadius:9,padding:"12px 14px",fontSize:15,width:"100%",outline:"none",marginBottom:10};
-  const searchMine=()=>{
+  const searchMine=async()=>{
     const q=(search||code).toUpperCase().trim();
-    const found=DEMO_MINES.find(m=>m.code===q||m.name.toUpperCase().includes(q));
-    if(found){setFoundMine(found);setSearchErr("");}
-    else setSearchErr("No mine found. Check the code or name and try again.");
+    if(!q){setSearchErr("Enter a mine code first.");return;}
+    setSearchLoading(true);setSearchErr("");setFoundMine(null);
+    try{
+      const {data,error}=await supabase.from("mines").select("id,name,location,code,plan").eq("code",q).maybeSingle();
+      if(error)throw error;
+      if(!data){setSearchErr("No mine found. Check the code and try again.");return;}
+      setFoundMine({...data,operators:0,machines:0});
+    }catch(err){
+      console.error("searchMine failed:",err);
+      setSearchErr(err.message||"Lookup failed. Try again.");
+    }finally{setSearchLoading(false);}
   };
   const ROLE_OPTS=[{id:"operator",label:"Operator",icon:"👷",color:"#4fa3e0",desc:"I operate mobile plant"},{id:"supervisor",label:"Supervisor",icon:"🔶",color:"#f5a623",desc:"I supervise the shift"},{id:"minemanager",label:"Mine Manager",icon:"⛏",color:"#a78bfa",desc:"I manage the operation"}];
   if(step===1)return <div style={{minHeight:"100vh",display:"flex",flexDirection:"column",justifyContent:"center",padding:"28px 20px"}} className="up">
@@ -2383,8 +2394,28 @@ function JoinMineFlow({onComplete,onBack}){
         </button>)}
       </div>
     </div>}
-    <button onClick={()=>{if(role&&(role!=="operator"||machine))setStep(4);}} style={{width:"100%",background:role&&(role!=="operator"||machine)?C.success:C.border,color:role&&(role!=="operator"||machine)?"#000":C.muted,border:"none",borderRadius:12,padding:"15px",fontFamily:F,fontWeight:900,fontSize:18,cursor:"pointer",transition:"background .2s"}}>
-      Request Access →
+    {joinErr&&<div style={{background:`${C.danger}15`,border:`1px solid ${C.danger}44`,borderRadius:10,padding:"10px 12px",marginBottom:10,fontSize:12,color:C.danger,textAlign:"left"}}>{joinErr}</div>}
+    <button disabled={joining||!role||(role==="operator"&&!machine)} onClick={async()=>{
+      if(!role||(role==="operator"&&!machine))return;
+      setJoining(true);setJoinErr("");
+      try{
+        const {data:auth,error:authErr}=await supabase.auth.signUp({email,password:pass,options:{data:{name}}});
+        if(authErr)throw authErr;
+        if(!auth?.user)throw new Error("Sign-up returned no user");
+        const {error:siErr}=await supabase.auth.signInWithPassword({email,password:pass});
+        if(siErr)throw siErr;
+        const {error:opErr}=await supabase.from("operators").insert({
+          auth_id:auth.user.id,mine_id:foundMine.id,name,role,
+          machine_id:role==="operator"?machine:null,status:"pending",
+        });
+        if(opErr)throw opErr;
+        setStep(4);
+      }catch(err){
+        console.error("Join mine failed:",err);
+        setJoinErr(err.message||"Could not join. Try again.");
+      }finally{setJoining(false);}
+    }} style={{width:"100%",background:joining?C.border:(role&&(role!=="operator"||machine)?C.success:C.border),color:joining?C.muted:(role&&(role!=="operator"||machine)?"#000":C.muted),border:"none",borderRadius:12,padding:"15px",fontFamily:F,fontWeight:900,fontSize:18,cursor:joining?"default":"pointer",transition:"background .2s"}}>
+      {joining?"Requesting…":"Request Access →"}
     </button>
     <button onClick={()=>setStep(2)} style={{width:"100%",background:"none",border:"none",color:C.muted,padding:"10px",fontFamily:F,fontWeight:700,fontSize:13,cursor:"pointer"}}>← Back</button>
   </div>;
