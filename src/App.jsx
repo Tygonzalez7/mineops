@@ -2221,6 +2221,8 @@ function CreateMineFlow({onComplete,onBack}){
   const[adminName,setAdminName]=useState("");
   const[numCrushers,setNumCrushers]=useState(1);
   const[code]=useState(()=>Math.random().toString(36).slice(2,8).toUpperCase());
+  const[creating,setCreating]=useState(false);
+  const[createErr,setCreateErr]=useState("");
   const passOk=pass.length>=8&&pass===pass2;
   const emailOk=/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
   const inp={background:C.surface,color:C.text,border:`1px solid ${C.border}`,borderRadius:9,padding:"12px 14px",fontSize:15,width:"100%",outline:"none",marginBottom:10};
@@ -2280,8 +2282,33 @@ function CreateMineFlow({onComplete,onBack}){
       <div style={{fontFamily:F,fontWeight:700,fontSize:13,color:C.success,marginBottom:6}}>What happens next</div>
       {["Your team downloads MineOps and taps Join a Mine","They enter code "+code+" to find "+mineName,"They create their profile and select their role","You approve them as Admin — or set auto-approve on","Your machines and crushers are set up in Settings"].map((s,i)=><div key={i} style={{display:"flex",gap:10,marginBottom:5}}><span style={{color:C.success,flexShrink:0}}>✓</span><span style={{fontSize:12,color:C.muted}}>{s}</span></div>)}
     </div>
-    <button onClick={()=>onComplete({mineName,location,code,adminName,email})} style={{width:"100%",background:`linear-gradient(135deg,${C.accent},#d4881e)`,color:"#000",border:"none",borderRadius:14,padding:"17px",fontFamily:F,fontWeight:900,fontSize:20,cursor:"pointer"}}>
-      Enter MineOps →
+    {createErr&&<div style={{background:`${C.danger}15`,border:`1px solid ${C.danger}44`,borderRadius:10,padding:"10px 12px",marginBottom:12,fontSize:12,color:C.danger,textAlign:"left"}}>{createErr}</div>}
+    <button disabled={creating} onClick={async()=>{
+      setCreating(true); setCreateErr("");
+      try {
+        const { data: auth, error: authErr } = await supabase.auth.signUp({
+          email, password: pass,
+          options: { data: { name: adminName } },
+        });
+        if (authErr) throw authErr;
+        if (!auth?.user) throw new Error("Sign-up returned no user");
+        const { data: mine, error: mineErr } = await supabase.from("mines").insert({
+          name: mineName, location, code, plan: "starter", owner_id: auth.user.id,
+        }).select().single();
+        if (mineErr) throw mineErr;
+        const { error: opErr } = await supabase.from("operators").insert({
+          auth_id: auth.user.id, mine_id: mine.id, name: adminName,
+          role: "admin", status: "active",
+        });
+        if (opErr) throw opErr;
+        onComplete({ ...mine, mineName: mine.name, adminName, email });
+      } catch (err) {
+        console.error("Create mine failed:", err);
+        setCreateErr(err.message || "Something went wrong. Try again.");
+        setCreating(false);
+      }
+    }} style={{width:"100%",background:creating?C.border:`linear-gradient(135deg,${C.accent},#d4881e)`,color:creating?C.muted:"#000",border:"none",borderRadius:14,padding:"17px",fontFamily:F,fontWeight:900,fontSize:20,cursor:creating?"default":"pointer"}}>
+      {creating ? "Creating mine…" : "Enter MineOps →"}
     </button>
   </div>;
 }
