@@ -886,7 +886,7 @@ function MachineCheckScreen({allMachines,catDemo,activeMine,activeShiftId,user})
   }
   return <div style={{paddingBottom:20}}><PageHdr title="Daily Machine Check" sub="MQSHA Reg 2017 minimum — select machine"/>
     <div style={{padding:"13px 15px"}}><div style={{display:"flex",gap:5,marginBottom:12}}><Stat label="Signed Off" value={Object.values(done).filter(Boolean).length} color={C.success}/><Stat label="Pending" value={allMachines.length-Object.values(done).filter(Boolean).length} color={C.amber}/></div>
-      {allMachines.map(m=>{const cat=catDemo.find(x=>x.id===m.id)?.data,isDone=done[m.id],cnt=count(m.id),sc=STATUS_COL[cat?.status]||C.info;return <Card key={m.id} onClick={()=>setSel(m.id)} style={{padding:"13px 14px",border:`1px solid ${isDone?C.success:C.border}`}}><div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:7}}><div><div style={{fontFamily:F,fontWeight:900,fontSize:17}}>{m.model}</div><div style={{fontSize:11,color:C.muted}}>{m.type} · {cat?.sn||"Custom"}</div></div><Pill label={isDone?"✓ SIGNED OFF":cat?.status?.toUpperCase()||"NEW"} color={isDone?C.success:sc}/></div>{!isDone&&cnt>0&&<div><div style={{fontSize:10,color:C.muted,marginBottom:3}}>{cnt}/{PRESTART.length} items</div><Bar value={cnt} max={PRESTART.length} color={C.accent} thin/></div>}{isDone?<div style={{fontSize:11,color:C.success}}>✓ Pre-start complete</div>:cnt===0?<div style={{fontSize:11,color:C.muted}}>Tap to begin →</div>:null}</Card>;})}
+      {allMachines.map(m=>{const cat=catDemo.find(x=>x.id===m.id)?.data,isDone=done[m.id],cnt=count(m.id),sc=STATUS_COL[cat?.status]||C.info;return <Card key={m.id} onClick={()=>setSel(m.id)} style={{padding:"13px 14px",border:`1px solid ${isDone?C.success:C.border}`}}><div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:7}}><div><div style={{fontFamily:F,fontWeight:900,fontSize:17,color:C.text}}>{m.model}</div><div style={{fontSize:11,color:C.muted}}>{m.type} · {cat?.sn||"Custom"}</div></div><Pill label={isDone?"✓ SIGNED OFF":cat?.status?.toUpperCase()||"NEW"} color={isDone?C.success:sc}/></div>{!isDone&&cnt>0&&<div><div style={{fontSize:10,color:C.muted,marginBottom:3}}>{cnt}/{PRESTART.length} items</div><Bar value={cnt} max={PRESTART.length} color={C.accent} thin/></div>}{isDone?<div style={{fontSize:11,color:C.success}}>✓ Pre-start complete</div>:cnt===0?<div style={{fontSize:11,color:C.muted}}>Tap to begin →</div>:null}</Card>;})}
     </div>
   </div>;
 }
@@ -1188,7 +1188,7 @@ function DiagnosticsScreen({allMachines,catDemo}){
         return <Card key={m.id} onClick={()=>{setSel(m.id);setTab("overview");}}
           style={{padding:"13px 14px",border:`1px solid ${hasLimit?C.danger+"44":cat?.faults?.length>0?C.amber+"44":C.border}`}}>
           <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:8}}>
-            <div><div style={{fontFamily:F,fontWeight:900,fontSize:17}}>{m.model}</div><div style={{fontSize:11,color:C.muted}}>{m.type} · {cat?.sn||"Custom"}</div></div>
+            <div><div style={{fontFamily:F,fontWeight:900,fontSize:17,color:C.text}}>{m.model}</div><div style={{fontSize:11,color:C.muted}}>{m.type} · {cat?.sn||"Custom"}</div></div>
             <div style={{display:"flex",flexDirection:"column",alignItems:"flex-end",gap:4}}>
               <Pill label={cat?.status?.toUpperCase()||"NEW"} color={sc}/>
               {hasLimit&&<Pill label="⚠ LIMIT" color={C.danger}/>}
@@ -1466,7 +1466,7 @@ function MaintenanceScreen({allMachines}){
         const sc=m.ov.length>0?C.danger:m.ds.length>0?C.amber:C.border;
         return <div key={m.id} onClick={()=>{setSel(m.id);setView("machine");}} style={{background:C.card,border:`1.5px solid ${m.alerts>0?sc+"55":C.border}`,borderRadius:14,padding:"13px 15px",marginBottom:10,cursor:"pointer"}}>
           <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:8}}>
-            <div><div style={{fontFamily:F,fontWeight:900,fontSize:17}}>{m.model}</div><div style={{fontSize:11,color:C.muted}}>{m.type} · {m.smh.toLocaleString()} SMH</div></div>
+            <div><div style={{fontFamily:F,fontWeight:900,fontSize:17,color:C.text}}>{m.model}</div><div style={{fontSize:11,color:C.muted}}>{m.type} · {m.smh.toLocaleString()} SMH</div></div>
             <div style={{display:"flex",flexDirection:"column",alignItems:"flex-end",gap:4}}>
               {m.ov.length>0&&<span style={{background:`${C.danger}20`,color:C.danger,border:`1px solid ${C.danger}44`,borderRadius:6,padding:"2px 8px",fontSize:10,fontFamily:F,fontWeight:700}}>{m.ov.length} OVERDUE</span>}
               {m.ds.length>0&&<span style={{background:`${C.amber}20`,color:C.amber,border:`1px solid ${C.amber}44`,borderRadius:6,padding:"2px 8px",fontSize:10,fontFamily:F,fontWeight:700}}>{m.ds.length} DUE SOON</span>}
