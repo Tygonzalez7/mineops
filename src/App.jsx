@@ -649,7 +649,7 @@ function LiveBoard({remoteOperators,remoteMachines,activeMine}){
   const rawMachines = isReal ? (remoteMachines||[]) : BASE_MACHINES;
   // Only show operators on production-affecting machines
   const PROD_TYPES = new Set(["Wheel Loader","Excavator","Haul Truck","Dozer","Drill","Grader","Loader"]);
-  const getMachineFor = op => rawMachines.find(m=>m.id===(op.machine_id||op.machine));
+  const getMachineFor = op => (rawMachines||[]).find(m=>m.id===(op.machine_id||op.machine));
   const productionOps = rawOps.filter(op => {
     const m = getMachineFor(op);
     return m && PROD_TYPES.has(m.type);
