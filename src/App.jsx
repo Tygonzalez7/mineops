@@ -642,74 +642,72 @@ function AddMachineScreen({onAdd,onBack}){
 // ── Live Board ─────────────────────────────────────────────────────────────
 // Crusher cards: show each contributing machine + its t/hr and % of total
 // Operator cards: t/hr for loaders/excavators | cycle time for trucks
-function LiveBoard(){
-  const ops=USERS.filter(u=>u.role==="operator");
-  const peerAvg=(uid,mtype,truck)=>{
-    const peers=ops.filter(u=>{const m=BASE_MACHINES.find(x=>x.id===u.machine);return u.id!==uid&&m?.type===mtype&&LIVE_OPS[u.id]?.active;});
-    if(!peers.length)return null;
-    const avg=arr=>+(arr.reduce((a,b)=>a+b,0)/arr.length).toFixed(1);
-    return{val:truck?avg(peers.map(u=>LIVE_OPS[u.id].cycleMin)):avg(peers.map(u=>LIVE_OPS[u.id].tph)),count:peers.length};
-  };
-  const sorted=[...ops].sort((a,b)=>{
-    const da=LIVE_OPS[a.id],db=LIVE_OPS[b.id];
-    if(da?.active&&!db?.active)return -1;if(!da?.active&&db?.active)return 1;
-    const ma=BASE_MACHINES.find(x=>x.id===a.machine),mb=BASE_MACHINES.find(x=>x.id===b.machine);
-    const ta=isMachTruck(ma?.type),tb=isMachTruck(mb?.type);
-    if(ta!==tb)return ta?1:-1;
-    if(ta)return (da?.cycleMin||99)-(db?.cycleMin||99);
-    return (db?.tph||0)-(da?.tph||0);
+function LiveBoard({remoteOperators,remoteMachines,activeMine}){
+  // Real mine: use Supabase operators/machines. Demo: use hardcoded USERS/BASE_MACHINES.
+  const isReal = !!activeMine?.id;
+  const rawOps = isReal ? (remoteOperators||[]) : USERS.filter(u=>u.role==="operator");
+  const rawMachines = isReal ? (remoteMachines||[]) : BASE_MACHINES;
+  // Only show operators on production-affecting machines
+  const PROD_TYPES = new Set(["Wheel Loader","Excavator","Haul Truck","Dozer","Drill","Grader","Loader"]);
+  const getMachineFor = op => rawMachines.find(m=>m.id===(op.machine_id||op.machine));
+  const productionOps = rawOps.filter(op => {
+    const m = getMachineFor(op);
+    return m && PROD_TYPES.has(m.type);
   });
-  const tphCol=v=>v>=250?C.success:v>=150?C.accent:C.danger;
-  const cycCol=v=>v<=19?C.success:v<=22?C.accent:C.danger;
-  const crusherCards=OP.crushers.map(c=>{
-    const contributors=getCrusherFeed(c.id);
-    const total=contributors.reduce((a,x)=>a+x.tph,0);
-    const pct=Math.min(100,(total/c.capacityTph)*100);
-    const col=pct>=95?C.success:pct>=70?C.accent:C.danger;
-    return{...c,contributors,total,pct,col};
+  // Group by machine signature: type + model + bucket (rounded)
+  const groups = {};
+  productionOps.forEach(op => {
+    const m = getMachineFor(op);
+    if(!m) return;
+    const bucket = m.bucket_size ?? m.bucket ?? null;
+    const key = `${m.type}|${m.model}|${bucket||"—"}`;
+    if(!groups[key]) groups[key] = {type:m.type, model:m.model, bucket, ops:[]};
+    groups[key].ops.push({op, machine:m});
   });
+  const groupKeys = Object.keys(groups).sort();
   return <div style={{paddingBottom:80}} className="up">
     <div style={{background:`linear-gradient(160deg,#0d1a08,${C.bg} 70%)`,borderBottom:`1px solid ${C.border}`,padding:"14px 15px 12px"}}>
       <div style={{fontSize:9,color:C.muted,letterSpacing:".14em",textTransform:"uppercase"}}>LIVE OPERATIONS BOARD</div>
-      <div style={{fontFamily:F,fontWeight:900,fontSize:24,color:C.text,marginTop:1,marginBottom:12}}>Shift Performance</div>
-      {crusherCards.filter(c=>c.contributors.length>0).map(c=><div key={c.id} style={{background:C.card,border:`1.5px solid ${c.col}44`,borderRadius:12,padding:"11px 13px",marginBottom:8}}>
-        <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:6}}>
-          <div><div style={{fontSize:9,color:C.muted,fontFamily:F,fontWeight:700,textTransform:"uppercase",letterSpacing:".05em"}}>{c.name} · {c.contributors.length} machine{c.contributors.length!==1?"s":""}</div><div style={{display:"flex",alignItems:"baseline",gap:5,marginTop:2}}><span style={{fontFamily:F,fontWeight:900,fontSize:28,color:c.col,lineHeight:1}}>{c.total}</span><span style={{fontSize:12,color:C.muted}}>/ {c.capacityTph} t/hr</span></div></div>
-          <div style={{textAlign:"right"}}><div style={{fontFamily:F,fontWeight:900,fontSize:22,color:c.col}}>{Math.round(c.pct)}%</div></div>
-        </div>
-        <Bar value={c.total} max={c.capacityTph} color={c.col} thin/>
-        <div style={{marginTop:8,display:"flex",flexDirection:"column",gap:5}}>
-          {c.contributors.map(x=>{const frac=c.total>0?x.tph/c.total:0;const xc=x.tph>0?C.success:C.muted;return <div key={x.userId} style={{display:"flex",alignItems:"center",gap:8}}>
-            <div style={{width:24,height:24,borderRadius:"50%",background:`${xc}20`,border:`1.5px solid ${xc}44`,display:"flex",alignItems:"center",justifyContent:"center",fontFamily:F,fontWeight:700,fontSize:9,color:xc,flexShrink:0}}>{x.avatar}</div>
-            <div style={{flex:1,minWidth:0}}><div style={{display:"flex",justifyContent:"space-between",marginBottom:2}}><span style={{fontSize:10,color:C.textSub,fontFamily:F,fontWeight:700}}>{x.machine}</span><span style={{fontSize:11,color:xc,fontFamily:F,fontWeight:900}}>{x.tph} t/hr · {Math.round(frac*100)}%</span></div><div style={{background:C.border,borderRadius:99,height:3,overflow:"hidden"}}><div style={{width:`${frac*100}%`,height:"100%",background:xc,borderRadius:99}}/></div></div>
-          </div>;})}
-        </div>
-      </div>)}
+      <div style={{fontFamily:F,fontWeight:900,fontSize:24,color:C.text,marginTop:1,marginBottom:4}}>Shift Performance</div>
+      <div style={{fontSize:11,color:C.muted}}>{activeMine?.name || "Demo mode"} · {productionOps.length} production operator{productionOps.length!==1?"s":""}</div>
     </div>
-    <div style={{padding:"12px 15px"}}>
-      <div style={{fontFamily:F,fontWeight:700,fontSize:11,color:C.muted,letterSpacing:".08em",textTransform:"uppercase",marginBottom:10}}>{ops.filter(u=>LIVE_OPS[u.id]?.active).length} Operators Active</div>
-      {sorted.map(user=>{
-        const data=LIVE_OPS[user.id],m=BASE_MACHINES.find(x=>x.id===user.machine);
-        if(!data)return null;
-        const truck=isMachTruck(m?.type);
-        if(!data.active)return <div key={user.id} style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:14,padding:"12px 14px",marginBottom:8,opacity:.55}}><div style={{display:"flex",alignItems:"center",gap:10}}><div style={{width:38,height:38,borderRadius:"50%",background:`${C.muted}22`,border:`2px solid ${C.muted}33`,display:"flex",alignItems:"center",justifyContent:"center",fontFamily:F,fontWeight:700,fontSize:13,color:C.muted}}>{user.avatar}</div><div><div style={{fontFamily:F,fontWeight:700,fontSize:15,color:C.textSub}}>{user.name}</div><div style={{fontSize:11,color:C.muted}}>{m?.model}</div></div><div style={{marginLeft:"auto"}}><Pill label="STANDBY" color={C.muted}/></div></div></div>;
-        const pc=truck?(data.cycleMin<=19?C.success:data.cycleMin<=22?C.accent:C.danger):(data.tph>=250?C.success:data.tph>=150?C.accent:C.danger);
-        const pa=peerAvg(user.id,m?.type,truck);
-        const diff=pa?Math.round(truck?((pa.val-data.cycleMin)/pa.val)*100:((data.tph-pa.val)/pa.val)*100):null;
-        const good=diff!==null&&diff>=5,bad=diff!==null&&diff<=-5;
-        return <div key={user.id} style={{background:good?`${C.success}08`:bad?`${C.danger}08`:C.card,border:`1.5px solid ${good?C.success+"33":bad?C.danger+"33":C.border}`,borderRadius:14,padding:"13px 14px",marginBottom:10}}>
-          <div style={{display:"flex",alignItems:"center",gap:11,marginBottom:10}}>
-            <div style={{width:42,height:42,borderRadius:"50%",background:`${pc}22`,border:`2px solid ${pc}55`,display:"flex",alignItems:"center",justifyContent:"center",fontFamily:F,fontWeight:700,fontSize:15,color:pc,flexShrink:0}}>{user.avatar}</div>
-            <div style={{flex:1}}><div style={{fontFamily:F,fontWeight:900,fontSize:16}}>{user.name}</div><div style={{fontSize:10,color:C.muted}}>{m?.model}{truck?` · ${m?.payload}t payload`:m?.bucket?` · ${m.bucket}t bucket`:""} · {m?.type}</div></div>
-            <div style={{textAlign:"right"}}><div style={{fontFamily:F,fontWeight:900,fontSize:30,color:pc,lineHeight:1}}>{truck?data.cycleMin:data.tph}</div><div style={{fontSize:10,color:C.muted}}>{truck?"min/cycle":"t/hr"}</div></div>
+    <div style={{padding:"14px 15px"}}>
+      {groupKeys.length===0 && <div style={{textAlign:"center",padding:"50px 20px"}}>
+        <div style={{fontSize:52,marginBottom:10,opacity:.5}}>👷</div>
+        <div style={{fontFamily:F,fontWeight:900,fontSize:19,color:C.text,marginBottom:6}}>No production operators yet</div>
+        <div style={{fontSize:12,color:C.muted,lineHeight:1.6,maxWidth:280,margin:"0 auto"}}>
+          {isReal ? "Operators assigned to loaders, excavators, haul trucks or dozers will appear here." : "Sign in to a real mine to see your operators."}
+        </div>
+      </div>}
+      {groupKeys.map(k => {
+        const g = groups[k];
+        return <div key={k} style={{marginBottom:18}}>
+          <div style={{display:"flex",alignItems:"baseline",gap:8,marginBottom:8,padding:"0 2px"}}>
+            <div style={{fontFamily:F,fontWeight:900,fontSize:14,color:C.text}}>{g.model}</div>
+            <div style={{fontSize:10,color:C.muted,fontFamily:F,fontWeight:700,letterSpacing:".1em",textTransform:"uppercase"}}>
+              {g.type}{g.bucket?` · ${g.bucket} yd³`:""}
+            </div>
+            <div style={{marginLeft:"auto",fontSize:10,color:C.muted}}>{g.ops.length} op{g.ops.length!==1?"s":""}</div>
           </div>
-          {truck?<div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:5,marginBottom:9}}>{[{l:"Trips/hr",v:data.tripsHr,c:data.tripsHr>=3?C.success:C.amber},{l:"Payload",v:`${data.payloadT}t`,c:C.info},{l:"Util",v:`${data.utilPct}%`,c:data.utilPct>=80?C.success:C.amber}].map(x=><div key={x.l} style={{background:C.surface,borderRadius:8,padding:"7px 8px",border:`1px solid ${C.border}`}}><div style={{fontSize:7,color:C.muted,fontFamily:F,fontWeight:700,textTransform:"uppercase"}}>{x.l}</div><div style={{fontFamily:F,fontWeight:900,fontSize:16,color:x.c,lineHeight:1.2,marginTop:2}}>{x.v}</div></div>)}</div>:<div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr 1fr",gap:5,marginBottom:9}}>{[{l:"Cycle",v:`${data.cycleMin}m`,c:data.cycleMin<=2.5?C.success:data.cycleMin<=5?C.amber:C.danger},{l:"Fill %",v:`${data.fillPct}%`,c:data.fillPct>=95?C.success:C.amber},{l:"Util",v:`${data.utilPct}%`,c:data.utilPct>=70?C.success:C.amber},{l:"t/hr",v:data.tph,c:pc}].map(x=><div key={x.l} style={{background:C.surface,borderRadius:8,padding:"7px 8px",border:`1px solid ${C.border}`}}><div style={{fontSize:7,color:C.muted,fontFamily:F,fontWeight:700,textTransform:"uppercase"}}>{x.l}</div><div style={{fontFamily:F,fontWeight:900,fontSize:16,color:x.c,lineHeight:1.2,marginTop:2}}>{x.v}</div></div>)}</div>}
-          <div style={{background:good?`${C.success}15`:bad?`${C.danger}12`:`${C.amber}12`,border:`1px solid ${good?C.success:bad?C.danger:C.amber}33`,borderRadius:8,padding:"7px 11px"}}><span style={{fontFamily:F,fontWeight:700,fontSize:12,color:good?C.success:bad?C.danger:C.amber}}>{diff===null?`Only ${m?.type} on shift — no peer comparison`:truck?(good?`🔥 ${diff}% faster cycle than peers`:bad?`⚠ ${Math.abs(diff)}% slower than peers`:`≈ Avg cycle (${pa?.count} peers)`):good?`🔥 +${diff}% t/hr above peers`:bad?`⚠ ${diff}% t/hr below peers`:`≈ Avg t/hr (${pa?.count} peers)`}</span></div>
+          {g.ops.map(({op,machine})=>{
+            const avatar = op.avatar || (op.name||"?").split(" ").map(p=>p[0]).join("").slice(0,2).toUpperCase();
+            const status = op.status || "active";
+            const pillColor = status==="active"?C.success:status==="pending"?C.amber:C.muted;
+            return <div key={op.id} style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:12,padding:"11px 13px",marginBottom:6,display:"flex",alignItems:"center",gap:11}}>
+              <div style={{width:36,height:36,borderRadius:"50%",background:`${pillColor}22`,border:`1.5px solid ${pillColor}55`,display:"flex",alignItems:"center",justifyContent:"center",fontFamily:F,fontWeight:700,fontSize:12,color:pillColor,flexShrink:0}}>{avatar}</div>
+              <div style={{flex:1,minWidth:0}}>
+                <div style={{fontFamily:F,fontWeight:700,fontSize:14,color:C.text}}>{op.name}</div>
+                <div style={{fontSize:10,color:C.muted,marginTop:1}}>{machine.model}{machine.serial_number?` · SN ${machine.serial_number.slice(-4)}`:""}</div>
+              </div>
+              <Pill label={status.toUpperCase()} color={pillColor}/>
+            </div>;
+          })}
         </div>;
       })}
     </div>
   </div>;
 }
+
 
 // ── Machine Performance — weekly, machine-first, relative % ranking ─────────
 function MachinePerformanceScreen({allMachines,custPerfData}){
@@ -2707,7 +2705,7 @@ function MineOpsApp() {
     if(tab==="intel")return <IntelligenceHub/>
     if(tab==="comply")return <ComplianceHub/>
     if(tab==="scoring")return <ScoringHub/>
-    return <LiveBoard/>
+    return <LiveBoard remoteOperators={remoteOperators} remoteMachines={remoteMachines} activeMine={activeMine}/>
   }
   return <div style={{maxWidth:420,margin:"0 auto",height:"100vh",display:"flex",flexDirection:"column",background:C.bg,position:"relative",overflow:"hidden"}}>
     {showSignOut&&<SignOutConfirm onConfirm={handleSignOut} onCancel={()=>setShowSignOut(false)}/>}
