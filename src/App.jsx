@@ -2681,7 +2681,16 @@ function MineOpsApp() {
     setCustPerfData(p=>({...p,[machine.id]:[]}));
     if(activeMine?.id){
       try{
-        await supabase.from("machines").insert({mine_id:activeMine.id,...machine,...(catData?{telematics:catData}:{})});
+        await supabase.from("machines").insert({
+          id:machine.id,
+          mine_id:activeMine.id,
+          model:machine.model,
+          type:machine.type,
+          bucket_size:machine.bucket||null,
+          crusher_assigned:machine.crusherAssigned||null,
+          serial_number:catData?.sn||null,
+          status:catData?.status||"standby",
+        });
       }catch(e){console.error("persist machine failed:",e);}
     }
   }
