@@ -864,6 +864,7 @@ function MachineCheckScreen({allMachines,catDemo,activeMine,activeShiftId,user})
         <div style={{marginBottom:16}}><div style={{fontSize:12,color:C.muted,marginBottom:6}}>Fuel level (%)<span style={{color:C.danger}}> *</span></div><input type="number" placeholder="e.g. 78" value={fuel} onChange={e=>handleFuel(e.target.value)} style={{background:C.surface,color:C.text,border:`1px solid ${fuelErr?C.danger:parseInt(fuel)>=1&&parseInt(fuel)<=100?C.success:C.border}`,borderRadius:9,padding:"13px 14px",fontSize:16,width:"100%",outline:"none"}}/>{fuelErr&&<div style={{fontSize:11,color:C.danger,marginTop:4}}>{fuelErr}</div>}</div>
         <button onClick={async()=>{
           if(!can)return;
+          console.log("[SIGN OFF]","activeMine:",activeMine,"activeShiftId:",activeShiftId,"user:",user,"sel:",sel,"checks:",checks[sel],"fuel:",fuel);
           setDone(p=>({...p,[sel]:true}));
           if(activeMine?.id&&activeShiftId&&user?.id){
             try{
