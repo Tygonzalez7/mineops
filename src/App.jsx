@@ -309,7 +309,7 @@ function TruckCheckScreen({onComplete}){
 // Checks grease (10 SMH), filter (100 SMH), and scheduled service (SMH-based).
 // Each item must be acknowledged before the operator can start the shift.
 
-function MaintenanceGate({machineId,allMachines,onClear,onBack}){
+function MaintenanceGate({machineId,allMachines,onClear,onBack,activeMine,user}){
   const m=allMachines.find(x=>x.id===machineId);
   const cat=CAT_DEMO[machineId];
   const currentSMH=cat?.smh||0;
@@ -516,7 +516,7 @@ function SinglePreStart({machineId,catDemo,allMachines,onDone,activeMine,activeS
     </div>
     <div style={{padding:"12px 16px"}}>
       {cat?.faults?.map((f,i)=><div key={i} style={{display:"flex",gap:8,background:`${f.sev==="high"?C.danger:C.amber}12`,border:`1px solid ${f.sev==="high"?C.danger:C.amber}30`,borderRadius:8,padding:"9px 12px",marginBottom:9}}><span style={{fontFamily:F,fontWeight:900,fontSize:13,color:f.sev==="high"?C.danger:C.amber,flexShrink:0}}>{f.code}</span><span style={{fontSize:12,color:C.textSub}}>{f.desc}</span></div>)}
-      {showGate&&<MaintenanceGate machineId={machineId} allMachines={allMachines} onClear={maintLog=>onDone({machineId,fuel:parseInt(fuel),maintLog})} onBack={()=>setShowGate(false)}/>}
+      {showGate&&<MaintenanceGate machineId={machineId} allMachines={allMachines} activeMine={activeMine} user={user} onClear={async maintLog=>{if(activeMine?.id&&user?.id&&maintLog?.length){try{const rows=maintLog.map(e=>({mine_id:activeMine.id,machine_id:machineId,task_id:e.item,smh_at_service:e.smh||null,hours_at_service:e.smh||null,technician_name:e.name||user.name||null,supervisor_approved_by:e.supervisor||null,notes:e.choice+(e.date?` booked ${e.date}`:""),logged_at:new Date().toISOString()}));const{error}=await supabase.from("maintenance_logs").insert(rows);if(error)console.error("maint insert:",error);}catch(e){console.error("maint exception:",e);}}onDone({machineId,fuel:parseInt(fuel),maintLog});}} onBack={()=>setShowGate(false)}/>}
       {photoViewing&&<PhotoViewer guide={photoViewing} machineType={machineType} onClose={()=>setPhotoViewing(null)}/>}
       <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:12,padding:"4px 14px",marginBottom:14}}>{PRESTART.map(c=>{const tk=machineType==="Haul Truck"?"truck":"loader";const hp=!!(PHOTO_GUIDES[tk]?.[c.id]);return <CkRow key={c.id} label={c.label} checked={!!checks[c.id]} onChange={()=>setChecks(p=>({...p,[c.id]:!p[c.id]}))} checkId={c.id} machineType={machineType} onPhoto={hp?id=>setPhotoViewing(id):null}/>;})}</div>
       <div style={{marginBottom:16}}><div style={{fontSize:12,color:C.muted,marginBottom:6}}>Fuel level at start (%)<span style={{color:C.danger}}> *</span></div>
@@ -780,14 +780,14 @@ function MachinePerformanceScreen({allMachines,custPerfData}){
 
 
 
-function ScoopLoggerScreen({user}){
+function ScoopLoggerScreen({user,activeMine,activeShiftId,machineId}){
   const machine=BASE_MACHINES.find(m=>m.id===user?.machine),crusher=OP.crushers.find(c=>c.id===user?.crusherAssigned),bucketT=machine?.bucket||7.5;
   const[scoops,setScoops]=useState([]);const[sel,setSel]=useState("full");const[pop,setPop]=useState(false);const[tab,setTab]=useState("scoops");const[events,setEvents]=useState([]);
   const[idleVis,setIdleVis]=useState(false);const[idleMins,setIdleMins]=useState(0);const[simOn,setSimOn]=useState(false);const[idleNote,setIdleNote]=useState("");
   const[tick,setTick]=useState(0);
   const shiftStart=useRef(Date.now()-3*3600*1000);const firstScoop=useRef(null);const lastTap=useRef(null);const idleRef=useRef(null);const tickRef=useRef(null);
   useEffect(()=>{tickRef.current=setInterval(()=>setTick(n=>n+1),15000);return()=>{clearInterval(tickRef.current);clearInterval(idleRef.current);};},[]);
-  const logScoop=()=>{const sz=SIZES.find(s=>s.key===sel),tonnes=+(bucketT*(sz.pct/100)).toFixed(2),now=Date.now(),cycle=lastTap.current?+((now-lastTap.current)/60000).toFixed(2):null;if(!firstScoop.current)firstScoop.current=now;lastTap.current=now;setPop(true);setTimeout(()=>setPop(false),220);setScoops(p=>[...p,{size:sel,tonnes,pct:sz.pct,cycle,t:now}]);};
+  const logScoop=async()=>{const sz=SIZES.find(s=>s.key===sel),tonnes=+(bucketT*(sz.pct/100)).toFixed(2),now=Date.now(),cycle=lastTap.current?+((now-lastTap.current)/60000).toFixed(2):null;if(!firstScoop.current)firstScoop.current=now;lastTap.current=now;setPop(true);setTimeout(()=>setPop(false),220);setScoops(p=>[...p,{size:sel,tonnes,pct:sz.pct,cycle,t:now}]);if(activeMine?.id&&activeShiftId&&machineId){try{const{error}=await supabase.from("scoop_logs").insert({mine_id:activeMine.id,shift_id:activeShiftId,machine_id:machineId,size:sel,fill_pct:sz.pct,tonnes,cycle_time_min:cycle,logged_at:new Date().toISOString()});if(error)console.error("scoop insert:",error);}catch(e){console.error("scoop exception:",e);}}};
   const rateBase=firstScoop.current?Math.max((Date.now()-firstScoop.current)/3600000,.05):null;
   const shiftElapsedH=((Date.now()-shiftStart.current)/3600000).toFixed(1);
   const totalT=+scoops.reduce((a,s)=>a+s.tonnes,0).toFixed(1);
@@ -801,8 +801,8 @@ function ScoopLoggerScreen({user}){
   const gap=crusher?Math.max(0,crusher.capacityTph-tph):0;
   const fillPct=crusher&&tph?Math.min(100,(tph/crusher.capacityTph)*100):0;const barCol=fillPct>=95?C.success:fillPct>=80?C.accent:C.danger;const selSz=SIZES.find(s=>s.key===sel);
   const startIdle=()=>{if(simOn)return;setSimOn(true);let m=0;idleRef.current=setInterval(()=>{m++;setIdleMins(m);if(m>=OP.idleAlertMins){setIdleVis(true);clearInterval(idleRef.current);}},400);};
-  const logReason=cat=>{const now=new Date();setEvents(p=>[...p,{cat,hrs:+(idleMins/60).toFixed(2),time:`${String(now.getHours()).padStart(2,"0")}:${String(now.getMinutes()).padStart(2,"0")}`,note:idleNote}]);setIdleVis(false);setSimOn(false);setIdleMins(0);setIdleNote("");clearInterval(idleRef.current);};
-  const flagLater=()=>{const now=new Date();setEvents(p=>[...p,{cat:"other",hrs:+(idleMins/60).toFixed(2),time:`${String(now.getHours()).padStart(2,"0")}:${String(now.getMinutes()).padStart(2,"0")}`,note:"⚠ Reason not recorded — flagged for supervisor",flagged:true}]);setIdleVis(false);setSimOn(false);setIdleMins(0);clearInterval(idleRef.current);};
+  const logReason=async cat=>{const now=new Date();const durMin=+idleMins;const dc=DT_CATS[cat];setEvents(p=>[...p,{cat,hrs:+(idleMins/60).toFixed(2),time:`${String(now.getHours()).padStart(2,"0")}:${String(now.getMinutes()).padStart(2,"0")}`,note:idleNote}]);if(activeMine?.id&&activeShiftId&&machineId){try{const{error}=await supabase.from("downtime_logs").insert({mine_id:activeMine.id,shift_id:activeShiftId,machine_id:machineId,category:cat,duration_min:durMin,note:idleNote||null,is_operator_fault:!!(dc&&dc.fault),flagged_for_supervisor:false,logged_at:new Date().toISOString()});if(error)console.error("downtime insert:",error);}catch(e){console.error("downtime exception:",e);}}setIdleVis(false);setSimOn(false);setIdleMins(0);setIdleNote("");clearInterval(idleRef.current);};
+  const flagLater=async()=>{const now=new Date();const durMin=+idleMins;setEvents(p=>[...p,{cat:"other",hrs:+(idleMins/60).toFixed(2),time:`${String(now.getHours()).padStart(2,"0")}:${String(now.getMinutes()).padStart(2,"0")}`,note:"⚠ Reason not recorded — flagged for supervisor",flagged:true}]);if(activeMine?.id&&activeShiftId&&machineId){try{const{error}=await supabase.from("downtime_logs").insert({mine_id:activeMine.id,shift_id:activeShiftId,machine_id:machineId,category:"other",duration_min:durMin,note:"Reason not recorded — flagged for supervisor",is_operator_fault:false,flagged_for_supervisor:true,logged_at:new Date().toISOString()});if(error)console.error("downtime flag insert:",error);}catch(e){console.error("downtime flag exception:",e);}}setIdleVis(false);setSimOn(false);setIdleMins(0);clearInterval(idleRef.current);};
   const tb=(t,ic,lb)=><button onClick={()=>setTab(t)} style={{flex:1,padding:"8px 0",background:"none",border:"none",color:tab===t?C.accent:C.muted,fontFamily:F,fontWeight:700,fontSize:9,borderBottom:`2px solid ${tab===t?C.accent:"transparent"}`,cursor:"pointer"}}><span style={{fontSize:13}}>{ic}</span>{" "}{lb}</button>;
   return <div style={{paddingBottom:80}} className="up">
     {idleVis&&<div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.85)",zIndex:300,display:"flex",alignItems:"flex-end"}}>
@@ -2700,7 +2700,7 @@ function MineOpsApp() {
     if(flow==="photoManager")return <PhotoManagerScreen/>
     if(flow==="inspHistory")return <PreshiftHistoryScreen mineId={activeMine?.id} onBack={()=>setFlow("app")}/>
     if(flow==="settings")return <SettingsScreen onClose={()=>setFlow("app")}/>
-    if(tab==="ops"&&lv===1)return <ScoopLoggerScreen user={user}/>
+    if(tab==="ops"&&lv===1)return <ScoopLoggerScreen user={user} activeMine={activeMine} activeShiftId={activeShiftId} machineId={user?.machine_id}/>
     if(tab==="checks")return <ChecksHub allMachines={allMachines} catDemo={catDemo} activeMine={activeMine} activeShiftId={activeShiftId} user={user}/>
     if(tab==="perf")return <MachinePerformanceScreen allMachines={allMachines} custPerfData={custPerfData}/>
     if(tab==="intel")return <IntelligenceHub/>
