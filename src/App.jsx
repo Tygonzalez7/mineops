@@ -499,7 +499,7 @@ function MaintenanceGate({machineId,allMachines,onClear,onBack}){
 }
 
 // ── Machine Select ────────────────────────────────────────────────────────
-function SinglePreStart({machineId,catDemo,allMachines,onDone}){
+function SinglePreStart({machineId,catDemo,allMachines,onDone,activeMine,activeShiftId,user}){
   const m=catDemo.find(x=>x.id===machineId)?.meta,cat=catDemo.find(x=>x.id===machineId)?.data;
   const[checks,setChecks]=useState({});const[fuel,setFuel]=useState("");const[fuelErr,setFuelErr]=useState("");
   const[photoViewing,setPhotoViewing]=useState(null);
@@ -523,7 +523,7 @@ function SinglePreStart({machineId,catDemo,allMachines,onDone}){
         <input type="number" placeholder="e.g. 78" value={fuel} onChange={e=>handleFuel(e.target.value)} style={{background:C.surface,color:C.text,border:`1px solid ${fuelErr?C.danger:fuelOk&&fuel?C.success:C.border}`,borderRadius:9,padding:"13px 14px",fontSize:16,width:"100%",outline:"none"}}/>
         {fuelErr&&<div style={{fontSize:11,color:C.danger,marginTop:4}}>{fuelErr}</div>}
       </div>
-      <button onClick={()=>{if(can)setShowGate(true);}} style={{width:"100%",background:can?C.success:C.border,color:can?"#000":C.muted,border:"none",borderRadius:12,padding:"16px",fontFamily:F,fontWeight:900,fontSize:18,cursor:can?"pointer":"default",transition:"background .2s"}}>
+      <button onClick={async()=>{if(!can)return;if(activeMine?.id&&activeShiftId&&user?.id){try{const{error}=await supabase.from("prestart_logs").insert({mine_id:activeMine.id,shift_id:activeShiftId,machine_id:machineId,operator_id:user.id,checks_passed:checks,fuel_level:parseInt(fuel)||null,signed_off_at:new Date().toISOString()});if(error)console.error("prestart insert error:",error);else console.log("prestart saved");}catch(e){console.error("prestart exception:",e);}}setShowGate(true);}} style={{width:"100%",background:can?C.success:C.border,color:can?"#000":C.muted,border:"none",borderRadius:12,padding:"16px",fontFamily:F,fontWeight:900,fontSize:18,cursor:can?"pointer":"default",transition:"background .2s"}}>
         {can?`✅  ${m?.model} SIGNED OFF`:"Complete all items + fuel level"}
       </button>
     </div>
@@ -543,7 +543,7 @@ function MachineSelectScreen({allMachines,catDemo,onComplete,isAdmin,onAddMachin
   }
   const[selected,setSelected]=useState([]);const[checking,setChecking]=useState(null);const[completed,setCompleted]=useState({});const[confirmed,setConfirmed]=useState(false);
   const allChecked=selected.length>0&&selected.every(id=>completed[id]);
-  if(checking)return <SinglePreStart machineId={checking} catDemo={catDemo} allMachines={allMachines} onDone={d=>{setCompleted(p=>({...p,[d.machineId]:d}));setChecking(null);}}/>;
+  if(checking)return <SinglePreStart machineId={checking} catDemo={catDemo} allMachines={allMachines} activeMine={activeMine} activeShiftId={activeShiftId} user={user} onDone={d=>{setCompleted(p=>({...p,[d.machineId]:d}));setChecking(null);}}/>;
   return <div style={{minHeight:"100vh",background:C.bg,paddingBottom:20}} className="up">
     <div style={{background:C.surface,borderBottom:`1px solid ${C.border}`,padding:"16px 16px 14px"}}>
       <div style={{fontFamily:F,fontWeight:900,fontSize:26,color:C.accent}}>{confirmed?"PRE-START CHECKS":"MACHINES TODAY"}</div>
