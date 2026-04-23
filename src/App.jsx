@@ -401,7 +401,7 @@ function MaintenanceGate({machineId,allMachines,onClear,onBack}){
   }
 
   // If nothing needs attention, clear immediately
-  React.useEffect(()=>{if(items.length===0)onClear([]);},[]);
+  useEffect(()=>{if(items.length===0)onClear([]);},[]);
   if(items.length===0)return null;
 
   // State: one card at a time
