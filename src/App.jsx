@@ -1517,7 +1517,7 @@ function ChecksHub({allMachines,catDemo,activeMine,activeShiftId,user}){
 
 
 
-function MenuOverlay({user,onNav,onAddMachine,onVehicleCheck,onClose,allMachines}){
+function MenuOverlay({user,onNav,onAddMachine,onVehicleCheck,onClose,allMachines,activeMine}){
   const lv=ROLES[user?.role]?.level||1;
   const Section=({title,children})=><div style={{marginBottom:6}}>
     <div style={{fontSize:9,color:C.muted,fontFamily:F,fontWeight:700,letterSpacing:".12em",textTransform:"uppercase",padding:"0 20px",marginBottom:8}}>{title}</div>
@@ -1565,6 +1565,7 @@ function MenuOverlay({user,onNav,onAddMachine,onVehicleCheck,onClose,allMachines
         <Section title="Fleet">
           <Item icon="🚛" label="Add Machine" sub="Add new equipment to the fleet" color={C.purple} onClick={()=>{onAddMachine();onClose();}}/>
           <Item icon="🔍" label="All Machines" sub={`${allMachines.length} in fleet · tap to view diagnostics`} onClick={()=>{onNav("checks");onClose();}}/>
+          <div style={{padding:"8px 20px 0"}}><VisionLinkSyncButton activeMine={activeMine}/></div>
         </Section>
         <div style={{padding:"16px 20px",marginTop:4}}>
           <div style={{fontSize:11,color:C.muted,textAlign:"center",lineHeight:1.5}}>MineOps · Demo Mode<br/>CAT VisionLink · MQSHA 1999 / Reg 2017</div>
@@ -1839,6 +1840,19 @@ function SubscriptionScreen({mineName,onSelect}){
       </button>
       <div style={{textAlign:"center",fontSize:11,color:C.muted,lineHeight:1.6}}>No credit card required for trial<br/>Billing starts after 14 days · Cancel anytime</div>
     </div>
+  </div>;
+}
+
+// ─── VisionLink Sync Button (manual re-sync) ─────────────────────
+function VisionLinkSyncButton({activeMine}){
+  const[syncing,setSyncing]=useState(false);const[msg,setMsg]=useState("");const[err,setErr]=useState("");
+  const sync=async()=>{setSyncing(true);setErr("");setMsg("");try{if(!activeMine?.id)throw new Error("No active mine");const{data,error}=await supabase.functions.invoke("visionlink-sync",{body:{mine_id:activeMine.id}});if(error)throw error;if(data?.error)throw new Error(data.error);setMsg(`✓ Synced ${data?.updated||0} of ${data?.total_assets||0} machines`);setTimeout(()=>setMsg(""),4000);}catch(e){setErr(e.message||"Sync failed");setTimeout(()=>setErr(""),5000);}finally{setSyncing(false);}};
+  return <div style={{marginTop:10}}>
+    <button onClick={sync} disabled={syncing} style={{width:"100%",background:syncing?C.border:C.card,color:syncing?C.muted:C.accent,border:`1px solid ${C.accent}44`,borderRadius:10,padding:"12px",fontFamily:F,fontWeight:700,fontSize:13,cursor:syncing?"default":"pointer"}}>
+      {syncing?"⏳ Syncing VisionLink…":"🔄 Sync VisionLink Now"}
+    </button>
+    {msg&&<div style={{marginTop:6,fontSize:11,color:C.success,textAlign:"center",fontFamily:F,fontWeight:700}}>{msg}</div>}
+    {err&&<div style={{marginTop:6,fontSize:11,color:C.danger,textAlign:"center",fontFamily:F,fontWeight:700}}>⚠ {err}</div>}
   </div>;
 }
 
@@ -2711,7 +2725,7 @@ function MineOpsApp() {
   }
   return <div style={{maxWidth:420,margin:"0 auto",height:"100vh",display:"flex",flexDirection:"column",background:C.bg,position:"relative",overflow:"hidden"}}>
     {showSignOut&&<SignOutConfirm onConfirm={handleSignOut} onCancel={()=>setShowSignOut(false)}/>}
-    {menuOpen&&<MenuOverlay user={user} allMachines={allMachines} onNav={t=>{setTab(t);setFlow("app")}} onAddMachine={()=>setFlow("addMachine")} onVehicleCheck={()=>setFlow("vehicleCheck")} onInspHistory={()=>{setFlow("inspHistory");setMenuOpen(false)}} onClose={()=>setMenuOpen(false)}/>}
+    {menuOpen&&<MenuOverlay user={user} allMachines={allMachines} activeMine={activeMine} onNav={t=>{setTab(t);setFlow("app")}} onAddMachine={()=>setFlow("addMachine")} onVehicleCheck={()=>setFlow("vehicleCheck")} onInspHistory={()=>{setFlow("inspHistory");setMenuOpen(false)}} onClose={()=>setMenuOpen(false)}/>}
     {user&&!["onboarding","createMine","joinMine","subscription","vlSetup","login","app","vehicleCheck","addMachine","photoManager","settings","inspHistory"].includes(flow)&&
       <div style={{flexShrink:0,background:`${C.surface}f2`,backdropFilter:"blur(10px)",borderBottom:`1px solid ${C.border}`,padding:"9px 15px",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
         <div style={{display:"flex",alignItems:"center",gap:10}}>
