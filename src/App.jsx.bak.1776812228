@@ -309,7 +309,7 @@ function TruckCheckScreen({onComplete}){
 // Checks grease (10 SMH), filter (100 SMH), and scheduled service (SMH-based).
 // Each item must be acknowledged before the operator can start the shift.
 
-function MaintenanceGate({machineId,allMachines,onClear,onBack,activeMine,user}){
+function MaintenanceGate({machineId,allMachines,onClear,onBack}){
   const m=allMachines.find(x=>x.id===machineId);
   const cat=CAT_DEMO[machineId];
   const currentSMH=cat?.smh||0;
@@ -401,7 +401,7 @@ function MaintenanceGate({machineId,allMachines,onClear,onBack,activeMine,user})
   }
 
   // If nothing needs attention, clear immediately
-  useEffect(()=>{if(items.length===0)onClear([]);},[]);
+  React.useEffect(()=>{if(items.length===0)onClear([]);},[]);
   if(items.length===0)return null;
 
   // State: one card at a time
@@ -499,7 +499,7 @@ function MaintenanceGate({machineId,allMachines,onClear,onBack,activeMine,user})
 }
 
 // ── Machine Select ────────────────────────────────────────────────────────
-function SinglePreStart({machineId,catDemo,allMachines,onDone,activeMine,activeShiftId,user}){
+function SinglePreStart({machineId,catDemo,allMachines,onDone}){
   const m=catDemo.find(x=>x.id===machineId)?.meta,cat=catDemo.find(x=>x.id===machineId)?.data;
   const[checks,setChecks]=useState({});const[fuel,setFuel]=useState("");const[fuelErr,setFuelErr]=useState("");
   const[photoViewing,setPhotoViewing]=useState(null);
@@ -516,21 +516,21 @@ function SinglePreStart({machineId,catDemo,allMachines,onDone,activeMine,activeS
     </div>
     <div style={{padding:"12px 16px"}}>
       {cat?.faults?.map((f,i)=><div key={i} style={{display:"flex",gap:8,background:`${f.sev==="high"?C.danger:C.amber}12`,border:`1px solid ${f.sev==="high"?C.danger:C.amber}30`,borderRadius:8,padding:"9px 12px",marginBottom:9}}><span style={{fontFamily:F,fontWeight:900,fontSize:13,color:f.sev==="high"?C.danger:C.amber,flexShrink:0}}>{f.code}</span><span style={{fontSize:12,color:C.textSub}}>{f.desc}</span></div>)}
-      {showGate&&<MaintenanceGate machineId={machineId} allMachines={allMachines} activeMine={activeMine} user={user} onClear={async maintLog=>{if(activeMine?.id&&user?.id&&maintLog?.length){try{const rows=maintLog.map(e=>({mine_id:activeMine.id,machine_id:machineId,task_id:e.item,smh_at_service:e.smh||null,hours_at_service:e.smh||null,technician_name:e.name||user.name||null,supervisor_approved_by:e.supervisor||null,notes:e.choice+(e.date?` booked ${e.date}`:""),logged_at:new Date().toISOString()}));const{error}=await supabase.from("maintenance_logs").insert(rows);if(error)console.error("maint insert:",error);}catch(e){console.error("maint exception:",e);}}onDone({machineId,fuel:parseInt(fuel),maintLog});}} onBack={()=>setShowGate(false)}/>}
+      {showGate&&<MaintenanceGate machineId={machineId} allMachines={allMachines} onClear={maintLog=>onDone({machineId,fuel:parseInt(fuel),maintLog})} onBack={()=>setShowGate(false)}/>}
       {photoViewing&&<PhotoViewer guide={photoViewing} machineType={machineType} onClose={()=>setPhotoViewing(null)}/>}
       <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:12,padding:"4px 14px",marginBottom:14}}>{PRESTART.map(c=>{const tk=machineType==="Haul Truck"?"truck":"loader";const hp=!!(PHOTO_GUIDES[tk]?.[c.id]);return <CkRow key={c.id} label={c.label} checked={!!checks[c.id]} onChange={()=>setChecks(p=>({...p,[c.id]:!p[c.id]}))} checkId={c.id} machineType={machineType} onPhoto={hp?id=>setPhotoViewing(id):null}/>;})}</div>
       <div style={{marginBottom:16}}><div style={{fontSize:12,color:C.muted,marginBottom:6}}>Fuel level at start (%)<span style={{color:C.danger}}> *</span></div>
         <input type="number" placeholder="e.g. 78" value={fuel} onChange={e=>handleFuel(e.target.value)} style={{background:C.surface,color:C.text,border:`1px solid ${fuelErr?C.danger:fuelOk&&fuel?C.success:C.border}`,borderRadius:9,padding:"13px 14px",fontSize:16,width:"100%",outline:"none"}}/>
         {fuelErr&&<div style={{fontSize:11,color:C.danger,marginTop:4}}>{fuelErr}</div>}
       </div>
-      <button onClick={async()=>{if(!can)return;if(activeMine?.id&&activeShiftId&&user?.id){try{const{error}=await supabase.from("prestart_logs").insert({mine_id:activeMine.id,shift_id:activeShiftId,machine_id:machineId,operator_id:user.id,checks_passed:checks,fuel_level:parseInt(fuel)||null,signed_off_at:new Date().toISOString()});if(error)console.error("prestart insert error:",error);else console.log("prestart saved");}catch(e){console.error("prestart exception:",e);}}setShowGate(true);}} style={{width:"100%",background:can?C.success:C.border,color:can?"#000":C.muted,border:"none",borderRadius:12,padding:"16px",fontFamily:F,fontWeight:900,fontSize:18,cursor:can?"pointer":"default",transition:"background .2s"}}>
+      <button onClick={()=>{if(can)setShowGate(true);}} style={{width:"100%",background:can?C.success:C.border,color:can?"#000":C.muted,border:"none",borderRadius:12,padding:"16px",fontFamily:F,fontWeight:900,fontSize:18,cursor:can?"pointer":"default",transition:"background .2s"}}>
         {can?`✅  ${m?.model} SIGNED OFF`:"Complete all items + fuel level"}
       </button>
     </div>
   </div>;
 }
 
-function MachineSelectScreen({allMachines,catDemo,onComplete,isAdmin,onAddMachine,activeMine,activeShiftId,user}){
+function MachineSelectScreen({allMachines,catDemo,onComplete,isAdmin,onAddMachine}){
   if(!allMachines||allMachines.length===0){
     return <div style={{minHeight:"70vh",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:"32px 24px",textAlign:"center"}}>
       <div style={{fontSize:52,marginBottom:12,opacity:.7}}>🏗</div>
@@ -543,7 +543,7 @@ function MachineSelectScreen({allMachines,catDemo,onComplete,isAdmin,onAddMachin
   }
   const[selected,setSelected]=useState([]);const[checking,setChecking]=useState(null);const[completed,setCompleted]=useState({});const[confirmed,setConfirmed]=useState(false);
   const allChecked=selected.length>0&&selected.every(id=>completed[id]);
-  if(checking)return <SinglePreStart machineId={checking} catDemo={catDemo} allMachines={allMachines} activeMine={activeMine} activeShiftId={activeShiftId} user={user} onDone={d=>{setCompleted(p=>({...p,[d.machineId]:d}));setChecking(null);}}/>;
+  if(checking)return <SinglePreStart machineId={checking} catDemo={catDemo} onDone={d=>{setCompleted(p=>({...p,[d.machineId]:d}));setChecking(null);}}/>;
   return <div style={{minHeight:"100vh",background:C.bg,paddingBottom:20}} className="up">
     <div style={{background:C.surface,borderBottom:`1px solid ${C.border}`,padding:"16px 16px 14px"}}>
       <div style={{fontFamily:F,fontWeight:900,fontSize:26,color:C.accent}}>{confirmed?"PRE-START CHECKS":"MACHINES TODAY"}</div>
@@ -642,72 +642,74 @@ function AddMachineScreen({onAdd,onBack}){
 // ── Live Board ─────────────────────────────────────────────────────────────
 // Crusher cards: show each contributing machine + its t/hr and % of total
 // Operator cards: t/hr for loaders/excavators | cycle time for trucks
-function LiveBoard({remoteOperators,remoteMachines,activeMine}){
-  // Real mine: use Supabase operators/machines. Demo: use hardcoded USERS/BASE_MACHINES.
-  const isReal = !!activeMine?.id;
-  const rawOps = isReal ? (remoteOperators||[]) : USERS.filter(u=>u.role==="operator");
-  const rawMachines = isReal ? (remoteMachines||[]) : BASE_MACHINES;
-  // Only show operators on production-affecting machines
-  const PROD_TYPES = new Set(["Wheel Loader","Excavator","Haul Truck","Dozer","Drill","Grader","Loader"]);
-  const getMachineFor = op => (rawMachines||[]).find(m=>m.id===(op.machine_id||op.machine));
-  const productionOps = rawOps.filter(op => {
-    const m = getMachineFor(op);
-    return m && PROD_TYPES.has(m.type);
+function LiveBoard(){
+  const ops=USERS.filter(u=>u.role==="operator");
+  const peerAvg=(uid,mtype,truck)=>{
+    const peers=ops.filter(u=>{const m=BASE_MACHINES.find(x=>x.id===u.machine);return u.id!==uid&&m?.type===mtype&&LIVE_OPS[u.id]?.active;});
+    if(!peers.length)return null;
+    const avg=arr=>+(arr.reduce((a,b)=>a+b,0)/arr.length).toFixed(1);
+    return{val:truck?avg(peers.map(u=>LIVE_OPS[u.id].cycleMin)):avg(peers.map(u=>LIVE_OPS[u.id].tph)),count:peers.length};
+  };
+  const sorted=[...ops].sort((a,b)=>{
+    const da=LIVE_OPS[a.id],db=LIVE_OPS[b.id];
+    if(da?.active&&!db?.active)return -1;if(!da?.active&&db?.active)return 1;
+    const ma=BASE_MACHINES.find(x=>x.id===a.machine),mb=BASE_MACHINES.find(x=>x.id===b.machine);
+    const ta=isMachTruck(ma?.type),tb=isMachTruck(mb?.type);
+    if(ta!==tb)return ta?1:-1;
+    if(ta)return (da?.cycleMin||99)-(db?.cycleMin||99);
+    return (db?.tph||0)-(da?.tph||0);
   });
-  // Group by machine signature: type + model + bucket (rounded)
-  const groups = {};
-  productionOps.forEach(op => {
-    const m = getMachineFor(op);
-    if(!m) return;
-    const bucket = m.bucket_size ?? m.bucket ?? null;
-    const key = `${m.type}|${m.model}|${bucket||"—"}`;
-    if(!groups[key]) groups[key] = {type:m.type, model:m.model, bucket, ops:[]};
-    groups[key].ops.push({op, machine:m});
+  const tphCol=v=>v>=250?C.success:v>=150?C.accent:C.danger;
+  const cycCol=v=>v<=19?C.success:v<=22?C.accent:C.danger;
+  const crusherCards=OP.crushers.map(c=>{
+    const contributors=getCrusherFeed(c.id);
+    const total=contributors.reduce((a,x)=>a+x.tph,0);
+    const pct=Math.min(100,(total/c.capacityTph)*100);
+    const col=pct>=95?C.success:pct>=70?C.accent:C.danger;
+    return{...c,contributors,total,pct,col};
   });
-  const groupKeys = Object.keys(groups).sort();
   return <div style={{paddingBottom:80}} className="up">
     <div style={{background:`linear-gradient(160deg,#0d1a08,${C.bg} 70%)`,borderBottom:`1px solid ${C.border}`,padding:"14px 15px 12px"}}>
       <div style={{fontSize:9,color:C.muted,letterSpacing:".14em",textTransform:"uppercase"}}>LIVE OPERATIONS BOARD</div>
-      <div style={{fontFamily:F,fontWeight:900,fontSize:24,color:C.text,marginTop:1,marginBottom:4}}>Shift Performance</div>
-      <div style={{fontSize:11,color:C.muted}}>{activeMine?.name || "Demo mode"} · {productionOps.length} production operator{productionOps.length!==1?"s":""}</div>
-    </div>
-    <div style={{padding:"14px 15px"}}>
-      {groupKeys.length===0 && <div style={{textAlign:"center",padding:"50px 20px"}}>
-        <div style={{fontSize:52,marginBottom:10,opacity:.5}}>👷</div>
-        <div style={{fontFamily:F,fontWeight:900,fontSize:19,color:C.text,marginBottom:6}}>No production operators yet</div>
-        <div style={{fontSize:12,color:C.muted,lineHeight:1.6,maxWidth:280,margin:"0 auto"}}>
-          {isReal ? "Operators assigned to loaders, excavators, haul trucks or dozers will appear here." : "Sign in to a real mine to see your operators."}
+      <div style={{fontFamily:F,fontWeight:900,fontSize:24,color:C.text,marginTop:1,marginBottom:12}}>Shift Performance</div>
+      {crusherCards.filter(c=>c.contributors.length>0).map(c=><div key={c.id} style={{background:C.card,border:`1.5px solid ${c.col}44`,borderRadius:12,padding:"11px 13px",marginBottom:8}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:6}}>
+          <div><div style={{fontSize:9,color:C.muted,fontFamily:F,fontWeight:700,textTransform:"uppercase",letterSpacing:".05em"}}>{c.name} · {c.contributors.length} machine{c.contributors.length!==1?"s":""}</div><div style={{display:"flex",alignItems:"baseline",gap:5,marginTop:2}}><span style={{fontFamily:F,fontWeight:900,fontSize:28,color:c.col,lineHeight:1}}>{c.total}</span><span style={{fontSize:12,color:C.muted}}>/ {c.capacityTph} t/hr</span></div></div>
+          <div style={{textAlign:"right"}}><div style={{fontFamily:F,fontWeight:900,fontSize:22,color:c.col}}>{Math.round(c.pct)}%</div></div>
         </div>
-      </div>}
-      {groupKeys.map(k => {
-        const g = groups[k];
-        return <div key={k} style={{marginBottom:18}}>
-          <div style={{display:"flex",alignItems:"baseline",gap:8,marginBottom:8,padding:"0 2px"}}>
-            <div style={{fontFamily:F,fontWeight:900,fontSize:14,color:C.text}}>{g.model}</div>
-            <div style={{fontSize:10,color:C.muted,fontFamily:F,fontWeight:700,letterSpacing:".1em",textTransform:"uppercase"}}>
-              {g.type}{g.bucket?` · ${g.bucket} yd³`:""}
-            </div>
-            <div style={{marginLeft:"auto",fontSize:10,color:C.muted}}>{g.ops.length} op{g.ops.length!==1?"s":""}</div>
+        <Bar value={c.total} max={c.capacityTph} color={c.col} thin/>
+        <div style={{marginTop:8,display:"flex",flexDirection:"column",gap:5}}>
+          {c.contributors.map(x=>{const frac=c.total>0?x.tph/c.total:0;const xc=x.tph>0?C.success:C.muted;return <div key={x.userId} style={{display:"flex",alignItems:"center",gap:8}}>
+            <div style={{width:24,height:24,borderRadius:"50%",background:`${xc}20`,border:`1.5px solid ${xc}44`,display:"flex",alignItems:"center",justifyContent:"center",fontFamily:F,fontWeight:700,fontSize:9,color:xc,flexShrink:0}}>{x.avatar}</div>
+            <div style={{flex:1,minWidth:0}}><div style={{display:"flex",justifyContent:"space-between",marginBottom:2}}><span style={{fontSize:10,color:C.textSub,fontFamily:F,fontWeight:700}}>{x.machine}</span><span style={{fontSize:11,color:xc,fontFamily:F,fontWeight:900}}>{x.tph} t/hr · {Math.round(frac*100)}%</span></div><div style={{background:C.border,borderRadius:99,height:3,overflow:"hidden"}}><div style={{width:`${frac*100}%`,height:"100%",background:xc,borderRadius:99}}/></div></div>
+          </div>;})}
+        </div>
+      </div>)}
+    </div>
+    <div style={{padding:"12px 15px"}}>
+      <div style={{fontFamily:F,fontWeight:700,fontSize:11,color:C.muted,letterSpacing:".08em",textTransform:"uppercase",marginBottom:10}}>{ops.filter(u=>LIVE_OPS[u.id]?.active).length} Operators Active</div>
+      {sorted.map(user=>{
+        const data=LIVE_OPS[user.id],m=BASE_MACHINES.find(x=>x.id===user.machine);
+        if(!data)return null;
+        const truck=isMachTruck(m?.type);
+        if(!data.active)return <div key={user.id} style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:14,padding:"12px 14px",marginBottom:8,opacity:.55}}><div style={{display:"flex",alignItems:"center",gap:10}}><div style={{width:38,height:38,borderRadius:"50%",background:`${C.muted}22`,border:`2px solid ${C.muted}33`,display:"flex",alignItems:"center",justifyContent:"center",fontFamily:F,fontWeight:700,fontSize:13,color:C.muted}}>{user.avatar}</div><div><div style={{fontFamily:F,fontWeight:700,fontSize:15,color:C.textSub}}>{user.name}</div><div style={{fontSize:11,color:C.muted}}>{m?.model}</div></div><div style={{marginLeft:"auto"}}><Pill label="STANDBY" color={C.muted}/></div></div></div>;
+        const pc=truck?(data.cycleMin<=19?C.success:data.cycleMin<=22?C.accent:C.danger):(data.tph>=250?C.success:data.tph>=150?C.accent:C.danger);
+        const pa=peerAvg(user.id,m?.type,truck);
+        const diff=pa?Math.round(truck?((pa.val-data.cycleMin)/pa.val)*100:((data.tph-pa.val)/pa.val)*100):null;
+        const good=diff!==null&&diff>=5,bad=diff!==null&&diff<=-5;
+        return <div key={user.id} style={{background:good?`${C.success}08`:bad?`${C.danger}08`:C.card,border:`1.5px solid ${good?C.success+"33":bad?C.danger+"33":C.border}`,borderRadius:14,padding:"13px 14px",marginBottom:10}}>
+          <div style={{display:"flex",alignItems:"center",gap:11,marginBottom:10}}>
+            <div style={{width:42,height:42,borderRadius:"50%",background:`${pc}22`,border:`2px solid ${pc}55`,display:"flex",alignItems:"center",justifyContent:"center",fontFamily:F,fontWeight:700,fontSize:15,color:pc,flexShrink:0}}>{user.avatar}</div>
+            <div style={{flex:1}}><div style={{fontFamily:F,fontWeight:900,fontSize:16}}>{user.name}</div><div style={{fontSize:10,color:C.muted}}>{m?.model}{truck?` · ${m?.payload}t payload`:m?.bucket?` · ${m.bucket}t bucket`:""} · {m?.type}</div></div>
+            <div style={{textAlign:"right"}}><div style={{fontFamily:F,fontWeight:900,fontSize:30,color:pc,lineHeight:1}}>{truck?data.cycleMin:data.tph}</div><div style={{fontSize:10,color:C.muted}}>{truck?"min/cycle":"t/hr"}</div></div>
           </div>
-          {g.ops.map(({op,machine})=>{
-            const avatar = op.avatar || (op.name||"?").split(" ").map(p=>p[0]).join("").slice(0,2).toUpperCase();
-            const status = op.status || "active";
-            const pillColor = status==="active"?C.success:status==="pending"?C.amber:C.muted;
-            return <div key={op.id} style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:12,padding:"11px 13px",marginBottom:6,display:"flex",alignItems:"center",gap:11}}>
-              <div style={{width:36,height:36,borderRadius:"50%",background:`${pillColor}22`,border:`1.5px solid ${pillColor}55`,display:"flex",alignItems:"center",justifyContent:"center",fontFamily:F,fontWeight:700,fontSize:12,color:pillColor,flexShrink:0}}>{avatar}</div>
-              <div style={{flex:1,minWidth:0}}>
-                <div style={{fontFamily:F,fontWeight:700,fontSize:14,color:C.text}}>{op.name}</div>
-                <div style={{fontSize:10,color:C.muted,marginTop:1}}>{machine.model}{machine.serial_number?` · SN ${machine.serial_number.slice(-4)}`:""}</div>
-              </div>
-              <Pill label={status.toUpperCase()} color={pillColor}/>
-            </div>;
-          })}
+          {truck?<div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:5,marginBottom:9}}>{[{l:"Trips/hr",v:data.tripsHr,c:data.tripsHr>=3?C.success:C.amber},{l:"Payload",v:`${data.payloadT}t`,c:C.info},{l:"Util",v:`${data.utilPct}%`,c:data.utilPct>=80?C.success:C.amber}].map(x=><div key={x.l} style={{background:C.surface,borderRadius:8,padding:"7px 8px",border:`1px solid ${C.border}`}}><div style={{fontSize:7,color:C.muted,fontFamily:F,fontWeight:700,textTransform:"uppercase"}}>{x.l}</div><div style={{fontFamily:F,fontWeight:900,fontSize:16,color:x.c,lineHeight:1.2,marginTop:2}}>{x.v}</div></div>)}</div>:<div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr 1fr",gap:5,marginBottom:9}}>{[{l:"Cycle",v:`${data.cycleMin}m`,c:data.cycleMin<=2.5?C.success:data.cycleMin<=5?C.amber:C.danger},{l:"Fill %",v:`${data.fillPct}%`,c:data.fillPct>=95?C.success:C.amber},{l:"Util",v:`${data.utilPct}%`,c:data.utilPct>=70?C.success:C.amber},{l:"t/hr",v:data.tph,c:pc}].map(x=><div key={x.l} style={{background:C.surface,borderRadius:8,padding:"7px 8px",border:`1px solid ${C.border}`}}><div style={{fontSize:7,color:C.muted,fontFamily:F,fontWeight:700,textTransform:"uppercase"}}>{x.l}</div><div style={{fontFamily:F,fontWeight:900,fontSize:16,color:x.c,lineHeight:1.2,marginTop:2}}>{x.v}</div></div>)}</div>}
+          <div style={{background:good?`${C.success}15`:bad?`${C.danger}12`:`${C.amber}12`,border:`1px solid ${good?C.success:bad?C.danger:C.amber}33`,borderRadius:8,padding:"7px 11px"}}><span style={{fontFamily:F,fontWeight:700,fontSize:12,color:good?C.success:bad?C.danger:C.amber}}>{diff===null?`Only ${m?.type} on shift — no peer comparison`:truck?(good?`🔥 ${diff}% faster cycle than peers`:bad?`⚠ ${Math.abs(diff)}% slower than peers`:`≈ Avg cycle (${pa?.count} peers)`):good?`🔥 +${diff}% t/hr above peers`:bad?`⚠ ${diff}% t/hr below peers`:`≈ Avg t/hr (${pa?.count} peers)`}</span></div>
         </div>;
       })}
     </div>
   </div>;
 }
-
 
 // ── Machine Performance — weekly, machine-first, relative % ranking ─────────
 function MachinePerformanceScreen({allMachines,custPerfData}){
@@ -780,14 +782,14 @@ function MachinePerformanceScreen({allMachines,custPerfData}){
 
 
 
-function ScoopLoggerScreen({user,activeMine,activeShiftId,machineId}){
+function ScoopLoggerScreen({user}){
   const machine=BASE_MACHINES.find(m=>m.id===user?.machine),crusher=OP.crushers.find(c=>c.id===user?.crusherAssigned),bucketT=machine?.bucket||7.5;
   const[scoops,setScoops]=useState([]);const[sel,setSel]=useState("full");const[pop,setPop]=useState(false);const[tab,setTab]=useState("scoops");const[events,setEvents]=useState([]);
   const[idleVis,setIdleVis]=useState(false);const[idleMins,setIdleMins]=useState(0);const[simOn,setSimOn]=useState(false);const[idleNote,setIdleNote]=useState("");
   const[tick,setTick]=useState(0);
   const shiftStart=useRef(Date.now()-3*3600*1000);const firstScoop=useRef(null);const lastTap=useRef(null);const idleRef=useRef(null);const tickRef=useRef(null);
   useEffect(()=>{tickRef.current=setInterval(()=>setTick(n=>n+1),15000);return()=>{clearInterval(tickRef.current);clearInterval(idleRef.current);};},[]);
-  const logScoop=async()=>{const sz=SIZES.find(s=>s.key===sel),tonnes=+(bucketT*(sz.pct/100)).toFixed(2),now=Date.now(),cycle=lastTap.current?+((now-lastTap.current)/60000).toFixed(2):null;if(!firstScoop.current)firstScoop.current=now;lastTap.current=now;setPop(true);setTimeout(()=>setPop(false),220);setScoops(p=>[...p,{size:sel,tonnes,pct:sz.pct,cycle,t:now}]);if(activeMine?.id&&activeShiftId&&machineId){try{const{error}=await supabase.from("scoop_logs").insert({mine_id:activeMine.id,shift_id:activeShiftId,machine_id:machineId,size:sel,fill_pct:sz.pct,tonnes,cycle_time_min:cycle,logged_at:new Date().toISOString()});if(error)console.error("scoop insert:",error);}catch(e){console.error("scoop exception:",e);}}};
+  const logScoop=()=>{const sz=SIZES.find(s=>s.key===sel),tonnes=+(bucketT*(sz.pct/100)).toFixed(2),now=Date.now(),cycle=lastTap.current?+((now-lastTap.current)/60000).toFixed(2):null;if(!firstScoop.current)firstScoop.current=now;lastTap.current=now;setPop(true);setTimeout(()=>setPop(false),220);setScoops(p=>[...p,{size:sel,tonnes,pct:sz.pct,cycle,t:now}]);};
   const rateBase=firstScoop.current?Math.max((Date.now()-firstScoop.current)/3600000,.05):null;
   const shiftElapsedH=((Date.now()-shiftStart.current)/3600000).toFixed(1);
   const totalT=+scoops.reduce((a,s)=>a+s.tonnes,0).toFixed(1);
@@ -801,8 +803,8 @@ function ScoopLoggerScreen({user,activeMine,activeShiftId,machineId}){
   const gap=crusher?Math.max(0,crusher.capacityTph-tph):0;
   const fillPct=crusher&&tph?Math.min(100,(tph/crusher.capacityTph)*100):0;const barCol=fillPct>=95?C.success:fillPct>=80?C.accent:C.danger;const selSz=SIZES.find(s=>s.key===sel);
   const startIdle=()=>{if(simOn)return;setSimOn(true);let m=0;idleRef.current=setInterval(()=>{m++;setIdleMins(m);if(m>=OP.idleAlertMins){setIdleVis(true);clearInterval(idleRef.current);}},400);};
-  const logReason=async cat=>{const now=new Date();const durMin=+idleMins;const dc=DT_CATS[cat];setEvents(p=>[...p,{cat,hrs:+(idleMins/60).toFixed(2),time:`${String(now.getHours()).padStart(2,"0")}:${String(now.getMinutes()).padStart(2,"0")}`,note:idleNote}]);if(activeMine?.id&&activeShiftId&&machineId){try{const{error}=await supabase.from("downtime_logs").insert({mine_id:activeMine.id,shift_id:activeShiftId,machine_id:machineId,category:cat,duration_min:durMin,note:idleNote||null,is_operator_fault:!!(dc&&dc.fault),flagged_for_supervisor:false,logged_at:new Date().toISOString()});if(error)console.error("downtime insert:",error);}catch(e){console.error("downtime exception:",e);}}setIdleVis(false);setSimOn(false);setIdleMins(0);setIdleNote("");clearInterval(idleRef.current);};
-  const flagLater=async()=>{const now=new Date();const durMin=+idleMins;setEvents(p=>[...p,{cat:"other",hrs:+(idleMins/60).toFixed(2),time:`${String(now.getHours()).padStart(2,"0")}:${String(now.getMinutes()).padStart(2,"0")}`,note:"⚠ Reason not recorded — flagged for supervisor",flagged:true}]);if(activeMine?.id&&activeShiftId&&machineId){try{const{error}=await supabase.from("downtime_logs").insert({mine_id:activeMine.id,shift_id:activeShiftId,machine_id:machineId,category:"other",duration_min:durMin,note:"Reason not recorded — flagged for supervisor",is_operator_fault:false,flagged_for_supervisor:true,logged_at:new Date().toISOString()});if(error)console.error("downtime flag insert:",error);}catch(e){console.error("downtime flag exception:",e);}}setIdleVis(false);setSimOn(false);setIdleMins(0);clearInterval(idleRef.current);};
+  const logReason=cat=>{const now=new Date();setEvents(p=>[...p,{cat,hrs:+(idleMins/60).toFixed(2),time:`${String(now.getHours()).padStart(2,"0")}:${String(now.getMinutes()).padStart(2,"0")}`,note:idleNote}]);setIdleVis(false);setSimOn(false);setIdleMins(0);setIdleNote("");clearInterval(idleRef.current);};
+  const flagLater=()=>{const now=new Date();setEvents(p=>[...p,{cat:"other",hrs:+(idleMins/60).toFixed(2),time:`${String(now.getHours()).padStart(2,"0")}:${String(now.getMinutes()).padStart(2,"0")}`,note:"⚠ Reason not recorded — flagged for supervisor",flagged:true}]);setIdleVis(false);setSimOn(false);setIdleMins(0);clearInterval(idleRef.current);};
   const tb=(t,ic,lb)=><button onClick={()=>setTab(t)} style={{flex:1,padding:"8px 0",background:"none",border:"none",color:tab===t?C.accent:C.muted,fontFamily:F,fontWeight:700,fontSize:9,borderBottom:`2px solid ${tab===t?C.accent:"transparent"}`,cursor:"pointer"}}><span style={{fontSize:13}}>{ic}</span>{" "}{lb}</button>;
   return <div style={{paddingBottom:80}} className="up">
     {idleVis&&<div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.85)",zIndex:300,display:"flex",alignItems:"flex-end"}}>
@@ -848,7 +850,7 @@ function ScoopLoggerScreen({user,activeMine,activeShiftId,machineId}){
 }
 
 // ── Machine Check ──────────────────────────────────────────────────────────
-function MachineCheckScreen({allMachines,catDemo,activeMine,activeShiftId,user}){
+function MachineCheckScreen({allMachines,catDemo}){
   const[sel,setSel]=useState(null);const[checks,setChecks]=useState({});const[done,setDone]=useState({});const[fuel,setFuel]=useState("");const[fuelErr,setFuelErr]=useState("");
   const count=id=>Object.values(checks[id]||{}).filter(Boolean).length;const allDone=id=>PRESTART.every(c=>(checks[id]||{})[c.id]);
   const handleFuel=v=>{setFuel(v);const n=parseInt(v);if(v==="")return setFuelErr("");if(isNaN(n)||n<1||n>100)return setFuelErr("Enter 1–100%");setFuelErr("");};
@@ -862,30 +864,13 @@ function MachineCheckScreen({allMachines,catDemo,activeMine,activeShiftId,user})
         {viewingPhoto&&<PhotoViewer guide={viewingPhoto} machineType={allMachines.find(x=>x.id===sel)?.type||"Wheel Loader"} onClose={()=>setViewingPhoto(null)}/>}
         <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:12,padding:"4px 14px",marginTop:13,marginBottom:14}}>{PRESTART.map(c=>{const mt=allMachines.find(x=>x.id===sel)?.type||"Wheel Loader";const tk=mt==="Haul Truck"?"truck":"loader";const hp=!!(PHOTO_GUIDES[tk]?.[c.id]);return <CkRow key={c.id} label={c.label} checked={(checks[sel]||{})[c.id]||false} onChange={()=>setChecks(p=>({...p,[sel]:{...(p[sel]||{}),[c.id]:!(p[sel]||{})[c.id]}}))} checkId={c.id} machineType={mt} onPhoto={hp?id=>setViewingPhoto(id):null}/>;})}</div>
         <div style={{marginBottom:16}}><div style={{fontSize:12,color:C.muted,marginBottom:6}}>Fuel level (%)<span style={{color:C.danger}}> *</span></div><input type="number" placeholder="e.g. 78" value={fuel} onChange={e=>handleFuel(e.target.value)} style={{background:C.surface,color:C.text,border:`1px solid ${fuelErr?C.danger:parseInt(fuel)>=1&&parseInt(fuel)<=100?C.success:C.border}`,borderRadius:9,padding:"13px 14px",fontSize:16,width:"100%",outline:"none"}}/>{fuelErr&&<div style={{fontSize:11,color:C.danger,marginTop:4}}>{fuelErr}</div>}</div>
-        <button onClick={async()=>{
-          if(!can)return;
-          console.log("[SIGN OFF]","activeMine:",activeMine,"activeShiftId:",activeShiftId,"user:",user,"sel:",sel,"checks:",checks[sel],"fuel:",fuel);
-          setDone(p=>({...p,[sel]:true}));
-          if(activeMine?.id&&activeShiftId&&user?.id){
-            try{
-              await supabase.from("prestart_logs").insert({
-                mine_id:activeMine.id,
-                shift_id:activeShiftId,
-                machine_id:sel,
-                operator_id:user.id,
-                checks_passed:checks[sel]||{},
-                fuel_level:parseInt(fuel)||null,
-                signed_off_at:new Date().toISOString(),
-              });
-            }catch(e){console.error("prestart_log insert:",e);}
-          }
-        }} style={{width:"100%",background:can?C.success:C.border,color:can?"#000":C.muted,border:"none",borderRadius:12,padding:"15px",fontFamily:F,fontWeight:900,fontSize:18,cursor:can?"pointer":"default",transition:"background .2s"}}>{can?"✅ SIGN OFF":"Complete all items + valid fuel level"}</button>
+        <button onClick={()=>{if(can)setDone(p=>({...p,[sel]:true}));}} style={{width:"100%",background:can?C.success:C.border,color:can?"#000":C.muted,border:"none",borderRadius:12,padding:"15px",fontFamily:F,fontWeight:900,fontSize:18,cursor:can?"pointer":"default",transition:"background .2s"}}>{can?"✅ SIGN OFF":"Complete all items + valid fuel level"}</button>
       </div>}
     </div>;
   }
   return <div style={{paddingBottom:20}}><PageHdr title="Daily Machine Check" sub="MQSHA Reg 2017 minimum — select machine"/>
     <div style={{padding:"13px 15px"}}><div style={{display:"flex",gap:5,marginBottom:12}}><Stat label="Signed Off" value={Object.values(done).filter(Boolean).length} color={C.success}/><Stat label="Pending" value={allMachines.length-Object.values(done).filter(Boolean).length} color={C.amber}/></div>
-      {allMachines.map(m=>{const cat=catDemo.find(x=>x.id===m.id)?.data,isDone=done[m.id],cnt=count(m.id),sc=STATUS_COL[cat?.status]||C.info;return <Card key={m.id} onClick={()=>setSel(m.id)} style={{padding:"13px 14px",border:`1px solid ${isDone?C.success:C.border}`}}><div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:7}}><div><div style={{fontFamily:F,fontWeight:900,fontSize:17,color:C.text}}>{m.model}</div><div style={{fontSize:11,color:C.muted}}>{m.type} · {cat?.sn||"Custom"}</div></div><Pill label={isDone?"✓ SIGNED OFF":cat?.status?.toUpperCase()||"NEW"} color={isDone?C.success:sc}/></div>{!isDone&&cnt>0&&<div><div style={{fontSize:10,color:C.muted,marginBottom:3}}>{cnt}/{PRESTART.length} items</div><Bar value={cnt} max={PRESTART.length} color={C.accent} thin/></div>}{isDone?<div style={{fontSize:11,color:C.success}}>✓ Pre-start complete</div>:cnt===0?<div style={{fontSize:11,color:C.muted}}>Tap to begin →</div>:null}</Card>;})}
+      {allMachines.map(m=>{const cat=catDemo.find(x=>x.id===m.id)?.data,isDone=done[m.id],cnt=count(m.id),sc=STATUS_COL[cat?.status]||C.info;return <Card key={m.id} onClick={()=>setSel(m.id)} style={{padding:"13px 14px",border:`1px solid ${isDone?C.success:C.border}`}}><div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:7}}><div><div style={{fontFamily:F,fontWeight:900,fontSize:17}}>{m.model}</div><div style={{fontSize:11,color:C.muted}}>{m.type} · {cat?.sn||"Custom"}</div></div><Pill label={isDone?"✓ SIGNED OFF":cat?.status?.toUpperCase()||"NEW"} color={isDone?C.success:sc}/></div>{!isDone&&cnt>0&&<div><div style={{fontSize:10,color:C.muted,marginBottom:3}}>{cnt}/{PRESTART.length} items</div><Bar value={cnt} max={PRESTART.length} color={C.accent} thin/></div>}{isDone?<div style={{fontSize:11,color:C.success}}>✓ Pre-start complete</div>:cnt===0?<div style={{fontSize:11,color:C.muted}}>Tap to begin →</div>:null}</Card>;})}
     </div>
   </div>;
 }
@@ -1187,7 +1172,7 @@ function DiagnosticsScreen({allMachines,catDemo}){
         return <Card key={m.id} onClick={()=>{setSel(m.id);setTab("overview");}}
           style={{padding:"13px 14px",border:`1px solid ${hasLimit?C.danger+"44":cat?.faults?.length>0?C.amber+"44":C.border}`}}>
           <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:8}}>
-            <div><div style={{fontFamily:F,fontWeight:900,fontSize:17,color:C.text}}>{m.model}</div><div style={{fontSize:11,color:C.muted}}>{m.type} · {cat?.sn||"Custom"}</div></div>
+            <div><div style={{fontFamily:F,fontWeight:900,fontSize:17}}>{m.model}</div><div style={{fontSize:11,color:C.muted}}>{m.type} · {cat?.sn||"Custom"}</div></div>
             <div style={{display:"flex",flexDirection:"column",alignItems:"flex-end",gap:4}}>
               <Pill label={cat?.status?.toUpperCase()||"NEW"} color={sc}/>
               {hasLimit&&<Pill label="⚠ LIMIT" color={C.danger}/>}
@@ -1307,7 +1292,7 @@ function ScoringHub(){
             const pctAhead=nv!=null?(truck?Math.round(((nv-pv)/nv)*100):Math.round(((pv-nv)/nv)*100)):null;
             const pc=truck?cycCol(op.cycleMin):tphCol(op.tph);
             const tip=!isTop?coachTip(op,leader,truck,m):null;
-            const[showTip,setShowTip]=useState(false);
+            const[showTip,setShowTip]=React.useState(false);
             return <div key={i} style={{marginBottom:10}}>
               {/* Rank row */}
               <div style={{background:isTop?`${C.accent}0a`:C.card,border:`1.5px solid ${isTop?C.accent+"55":C.border}`,borderRadius:12,padding:"12px 14px"}}>
@@ -1465,7 +1450,7 @@ function MaintenanceScreen({allMachines}){
         const sc=m.ov.length>0?C.danger:m.ds.length>0?C.amber:C.border;
         return <div key={m.id} onClick={()=>{setSel(m.id);setView("machine");}} style={{background:C.card,border:`1.5px solid ${m.alerts>0?sc+"55":C.border}`,borderRadius:14,padding:"13px 15px",marginBottom:10,cursor:"pointer"}}>
           <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:8}}>
-            <div><div style={{fontFamily:F,fontWeight:900,fontSize:17,color:C.text}}>{m.model}</div><div style={{fontSize:11,color:C.muted}}>{m.type} · {m.smh.toLocaleString()} SMH</div></div>
+            <div><div style={{fontFamily:F,fontWeight:900,fontSize:17}}>{m.model}</div><div style={{fontSize:11,color:C.muted}}>{m.type} · {m.smh.toLocaleString()} SMH</div></div>
             <div style={{display:"flex",flexDirection:"column",alignItems:"flex-end",gap:4}}>
               {m.ov.length>0&&<span style={{background:`${C.danger}20`,color:C.danger,border:`1px solid ${C.danger}44`,borderRadius:6,padding:"2px 8px",fontSize:10,fontFamily:F,fontWeight:700}}>{m.ov.length} OVERDUE</span>}
               {m.ds.length>0&&<span style={{background:`${C.amber}20`,color:C.amber,border:`1px solid ${C.amber}44`,borderRadius:6,padding:"2px 8px",fontSize:10,fontFamily:F,fontWeight:700}}>{m.ds.length} DUE SOON</span>}
@@ -1494,10 +1479,10 @@ function MaintenanceScreen({allMachines}){
 }
 
 // ── Checks hub ─────────────────────────────────────────────────────────────
-function ChecksHub({allMachines,catDemo,activeMine,activeShiftId,user}){
+function ChecksHub({allMachines,catDemo}){
   const[active,setActive]=useState(null);
   const Bk=()=><button onClick={()=>setActive(null)} style={{margin:"10px 16px 0",background:"none",border:`1px solid ${C.border}`,borderRadius:7,padding:"5px 13px",color:C.muted,fontSize:11,fontFamily:F,fontWeight:700,cursor:"pointer",display:"block"}}>← Back</button>;
-  if(active==="machine")    return <div><Bk/><MachineCheckScreen allMachines={allMachines} catDemo={catDemo} activeMine={activeMine} activeShiftId={activeShiftId} user={user}/></div>;
+  if(active==="machine")    return <div><Bk/><MachineCheckScreen allMachines={allMachines} catDemo={catDemo}/></div>;
   if(active==="site")       return <div><Bk/><SiteCheckScreen/></div>;
   if(active==="diag")       return <div><Bk/><DiagnosticsScreen allMachines={allMachines} catDemo={catDemo}/></div>;
   if(active==="maintenance")return <MaintenanceScreen allMachines={allMachines} catDemo={catDemo}/>;
@@ -1508,7 +1493,7 @@ function ChecksHub({allMachines,catDemo,activeMine,activeShiftId,user}){
     {id:"diag",       icon:"⚙", title:"Machine Diagnostics",sub:"Fault codes · fluids · CAT VisionLink",                    color:C.amber},
   ];
   return <div style={{paddingBottom:80}}><PageHdr title="Checks & Maintenance"/>
-    <div style={{padding:"14px 16px"}}>{MENU.map(m=><button key={m.id} onClick={()=>setActive(m.id)} style={{width:"100%",background:C.card,border:`1px solid ${m.color}33`,borderRadius:14,padding:"17px 15px",marginBottom:10,display:"flex",alignItems:"center",gap:13,textAlign:"left",cursor:"pointer"}}><div style={{width:50,height:50,borderRadius:13,background:`${m.color}18`,border:`2px solid ${m.color}33`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:24,flexShrink:0}}>{m.icon}</div><div style={{flex:1}}><div style={{fontFamily:F,fontWeight:900,fontSize:17,color:C.text}}>{m.title}</div><div style={{fontSize:11,color:C.muted,marginTop:2}}>{m.sub}</div></div><span style={{color:C.muted,fontSize:16}}>→</span></button>)}
+    <div style={{padding:"14px 16px"}}>{MENU.map(m=><button key={m.id} onClick={()=>setActive(m.id)} style={{width:"100%",background:C.card,border:`1px solid ${m.color}33`,borderRadius:14,padding:"17px 15px",marginBottom:10,display:"flex",alignItems:"center",gap:13,textAlign:"left",cursor:"pointer"}}><div style={{width:50,height:50,borderRadius:13,background:`${m.color}18`,border:`2px solid ${m.color}33`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:24,flexShrink:0}}>{m.icon}</div><div style={{flex:1}}><div style={{fontFamily:F,fontWeight:900,fontSize:17}}>{m.title}</div><div style={{fontSize:11,color:C.muted,marginTop:2}}>{m.sub}</div></div><span style={{color:C.muted,fontSize:16}}>→</span></button>)}
     </div>
   </div>;
 }
@@ -1843,12 +1828,12 @@ function SubscriptionScreen({mineName,onSelect}){
 }
 
 // ── VisionLink Setup Wizard ────────────────────────────────────────────────
-function VisionLinkSetup({onComplete,onSkip,activeMine}){
+function VisionLinkSetup({onComplete,onSkip}){
   const[step,setStep]=useState(1);
   const[clientId,setClientId]=useState("");const[secret,setSecret]=useState("");const[appKey,setAppKey]=useState("");
-  const[importing,setImporting]=useState(false);const[imported,setImported]=useState(false);const[err,setErr]=useState("");
+  const[importing,setImporting]=useState(false);const[imported,setImported]=useState(false);
   const inp={background:C.surface,color:C.text,border:`1px solid ${C.border}`,borderRadius:9,padding:"12px 14px",fontSize:14,width:"100%",outline:"none",fontFamily:"monospace",marginBottom:10};
-  const simulate=async()=>{setImporting(true);setErr("");try{if(!activeMine?.id)throw new Error("No active mine");const{error:upErr}=await supabase.from("visionlink_credentials").upsert({mine_id:activeMine.id,client_id:clientId,client_secret:secret,app_key:appKey,connected_at:new Date().toISOString()},{onConflict:"mine_id"});if(upErr)throw upErr;const{data:syncData,error:syncErr}=await supabase.functions.invoke("visionlink-sync",{body:{mine_id:activeMine.id}});if(syncErr)console.warn("VL sync (first run) error:",syncErr);setImporting(false);setImported(true);setTimeout(()=>setStep(3),800);}catch(e){setImporting(false);setErr(e.message||"Could not save credentials");console.error("VL setup:",e);}};
+  const simulate=()=>{setImporting(true);setTimeout(()=>{setImporting(false);setImported(true);setTimeout(()=>setStep(3),800);},2200);};
   if(step===1)return <div style={{padding:"28px 20px",minHeight:"100vh",display:"flex",flexDirection:"column",justifyContent:"center"}} className="up">
     <div style={{textAlign:"center",marginBottom:24}}>
       <div style={{fontSize:52,marginBottom:8}}>📡</div>
@@ -1876,7 +1861,6 @@ function VisionLinkSetup({onComplete,onSkip,activeMine}){
     <input type="password" value={secret} onChange={e=>setSecret(e.target.value)} placeholder="••••••••••••••••" style={{...inp,border:`1px solid ${secret?C.success:C.border}`}}/>
     <div style={{fontSize:12,color:C.muted,marginBottom:5}}>Application Key</div>
     <input value={appKey} onChange={e=>setAppKey(e.target.value)} placeholder="e.g. APPKEY-XYZ-12345" style={{...inp,border:`1px solid ${appKey?C.success:C.border}`}}/>
-    {err&&<div style={{background:`${C.danger}12`,border:`1px solid ${C.danger}33`,borderRadius:10,padding:"10px 13px",marginBottom:10}}><div style={{fontFamily:F,fontWeight:700,fontSize:13,color:C.danger}}>⚠ {err}</div></div>}
     {imported&&<div style={{background:`${C.success}12`,border:`1px solid ${C.success}33`,borderRadius:10,padding:"10px 13px",marginBottom:10}}><div style={{fontFamily:F,fontWeight:700,fontSize:13,color:C.success}}>✅ Importing fleet from VisionLink…</div></div>}
     <button onClick={simulate} disabled={importing||!clientId||!secret||!appKey} style={{width:"100%",background:clientId&&secret&&appKey?C.success:C.border,color:clientId&&secret&&appKey?"#000":C.muted,border:"none",borderRadius:12,padding:"15px",fontFamily:F,fontWeight:900,fontSize:18,cursor:"pointer",marginBottom:8,transition:"background .2s"}}>
       {importing?"⏳ Connecting to VisionLink…":"Import Fleet →"}
@@ -2457,63 +2441,6 @@ function JoinMineFlow({onComplete,onBack}){
   </div>;
 }
 
-
-function PreshiftHistoryScreen({mineId,onBack}){
-  const[logs,setLogs]=useState(null);
-  const[err,setErr]=useState("");
-  useEffect(()=>{
-    let cancelled=false;
-    (async()=>{
-      try{
-        const {data,error}=await supabase
-          .from("prestart_logs")
-          .select("id,machine_id,operator_id,checks_passed,signed_off_at,fuel_level,operators(name),shifts(shift_type,shift_start)")
-          .eq("mine_id",mineId)
-          .order("signed_off_at",{ascending:false})
-          .limit(200);
-        if(error)throw error;
-        if(!cancelled)setLogs(data||[]);
-      }catch(e){console.error("history load:",e);if(!cancelled)setErr(e.message||"Load failed");}
-    })();
-    return()=>{cancelled=true;};
-  },[mineId]);
-  // Group by date
-  const grouped={};
-  (logs||[]).forEach(l=>{
-    const d=l.signed_off_at?new Date(l.signed_off_at).toLocaleDateString():"Unknown";
-    if(!grouped[d])grouped[d]=[];
-    grouped[d].push(l);
-  });
-  return <div style={{padding:"0 0 30px"}}>
-    <PageHdr title="Inspection History" sub="Pre-shift logs · last 200" back onBack={onBack}/>
-    <div style={{padding:"4px 16px"}}>
-      {err&&<div style={{background:`${C.danger}15`,border:`1px solid ${C.danger}44`,borderRadius:10,padding:"10px 12px",marginBottom:12,fontSize:12,color:C.danger}}>{err}</div>}
-      {logs===null&&<div style={{textAlign:"center",padding:"40px 0",color:C.muted,fontSize:13}}>Loading…</div>}
-      {logs!==null&&logs.length===0&&<div style={{textAlign:"center",padding:"40px 20px"}}>
-        <div style={{fontSize:44,marginBottom:10,opacity:.6}}>📋</div>
-        <div style={{fontFamily:F,fontWeight:900,fontSize:18,color:C.text,marginBottom:4}}>No inspections yet</div>
-        <div style={{fontSize:12,color:C.muted}}>Completed pre-shifts will appear here</div>
-      </div>}
-      {Object.keys(grouped).map(d=><div key={d} style={{marginBottom:16}}>
-        <div style={{fontFamily:F,fontWeight:700,fontSize:11,color:C.muted,letterSpacing:".12em",textTransform:"uppercase",marginBottom:8}}>{d}</div>
-        {grouped[d].map(l=>{
-          const passed=Object.values(l.checks_passed||{}).filter(Boolean).length;
-          const total=Object.keys(l.checks_passed||{}).length;
-          const ok=passed===total&&total>0;
-          const t=l.signed_off_at?new Date(l.signed_off_at).toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"}):"";
-          return <div key={l.id} style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:10,padding:"11px 13px",marginBottom:6}}>
-            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:3}}>
-              <div style={{fontFamily:F,fontWeight:900,fontSize:14,color:C.text}}>{l.machine_id}</div>
-              <div style={{fontSize:10,fontFamily:F,fontWeight:700,color:ok?C.success:C.amber,background:ok?`${C.success}15`:`${C.amber}15`,border:`1px solid ${ok?C.success:C.amber}44`,borderRadius:6,padding:"2px 7px"}}>{passed}/{total||"?"} {ok?"✓":"!"}</div>
-            </div>
-            <div style={{fontSize:11,color:C.muted}}>{l.operators?.name||"—"} · {l.shifts?.shift_type||"—"} shift · {t}</div>
-          </div>;
-        })}
-      </div>)}
-    </div>
-  </div>;
-}
-
 function Login({onLogin,mine,onBack}){
   const[email,setEmail]=useState("");
   const[pass,setPass]=useState("");
@@ -2582,7 +2509,6 @@ function MineOpsApp() {
   const [showSignOut,setShowSignOut]=useState(false)
   const [menuOpen,setMenuOpen]=useState(false)
   const [customMachines,setCustomMachines]=useState([])
-  const [activeShiftId,setActiveShiftId]=useState(null)
   const [customCatData,setCustomCatData]=useState([])
   const [custPerfData,setCustPerfData]=useState({})
   // Load the user's operator profile + mine whenever session changes
@@ -2659,60 +2585,35 @@ function MineOpsApp() {
   const catDemo=[...Object.entries(CAT_DEMO).map(([id,data])=>({id,meta:BASE_MACHINES.find(m=>m.id===id),data})),...customCatData]
   const lv=ROLES[user?.role]?.level||1
   const handleLogin=()=>{ /* session is already set by AuthProvider; loadProfile effect handles the rest */ }
-  const ensureShift=async(truckDriven)=>{
-    if(!user?.id||!activeMine?.id||activeShiftId)return activeShiftId;
-    const hr=new Date().getHours();
-    const shiftType=(hr>=6&&hr<18)?"day":"night";
-    try{
-      const {data,error}=await supabase.from("shifts").insert({
-        operator_id:user.id,mine_id:activeMine.id,
-        shift_start:new Date().toISOString(),status:"active",
-        truck_driven:!!truckDriven,shift_type:shiftType,
-      }).select().single();
-      if(error)throw error;
-      setActiveShiftId(data.id);
-      return data.id;
-    }catch(e){console.error("ensureShift failed:",e);return null;}
-  }
-  const handleTruck=async drove=>{await ensureShift(drove);if(drove)setFlow("truckCheck");else setFlow(lv===1?"machines":"app")}
+  const handleTruck=drove=>{if(drove)setFlow("truckCheck");else setFlow(lv===1?"machines":"app")}
   const handleAddMachine=async(machine,catData)=>{
     setCustomMachines(p=>[...p,machine]);
     setCustomCatData(p=>[...p,{id:machine.id,meta:machine,data:catData}]);
     setCustPerfData(p=>({...p,[machine.id]:[]}));
     if(activeMine?.id){
       try{
-        await supabase.from("machines").insert({
-          id:machine.id,
-          mine_id:activeMine.id,
-          model:machine.model,
-          type:machine.type,
-          bucket_size:machine.bucket||null,
-          crusher_assigned:machine.crusherAssigned||null,
-          serial_number:catData?.sn||null,
-          status:catData?.status||"standby",
-        });
+        await supabase.from("machines").insert({mine_id:activeMine.id,...machine,...(catData?{telematics:catData}:{})});
       }catch(e){console.error("persist machine failed:",e);}
     }
   }
-  const handleSignOut=async()=>{await supabase.auth.signOut();setUser(null);setActiveMine(null);setRemoteMachines(null);setRemoteOperators(null);setActiveShiftId(null);setFlow("onboarding");setTab("board");setShowSignOut(false);setMenuOpen(false);}
+  const handleSignOut=async()=>{await supabase.auth.signOut();setUser(null);setActiveMine(null);setRemoteMachines(null);setRemoteOperators(null);setFlow("onboarding");setTab("board");setShowSignOut(false);setMenuOpen(false);}
   const screen=()=>{
     if(flow==="vehicleCheck")return <TruckCheckScreen onComplete={()=>setFlow("app")}/>
     if(flow==="addMachine")return <AddMachineScreen allMachines={allMachines} onAdd={handleAddMachine} onBack={()=>setFlow("app")}/>
     if(flow==="photoManager")return <PhotoManagerScreen/>
-    if(flow==="inspHistory")return <PreshiftHistoryScreen mineId={activeMine?.id} onBack={()=>setFlow("app")}/>
     if(flow==="settings")return <SettingsScreen onClose={()=>setFlow("app")}/>
-    if(tab==="ops"&&lv===1)return <ScoopLoggerScreen user={user} activeMine={activeMine} activeShiftId={activeShiftId} machineId={user?.machine_id}/>
-    if(tab==="checks")return <ChecksHub allMachines={allMachines} catDemo={catDemo} activeMine={activeMine} activeShiftId={activeShiftId} user={user}/>
+    if(tab==="ops"&&lv===1)return <ScoopLoggerScreen user={user}/>
+    if(tab==="checks")return <ChecksHub allMachines={allMachines} catDemo={catDemo}/>
     if(tab==="perf")return <MachinePerformanceScreen allMachines={allMachines} custPerfData={custPerfData}/>
     if(tab==="intel")return <IntelligenceHub/>
     if(tab==="comply")return <ComplianceHub/>
     if(tab==="scoring")return <ScoringHub/>
-    return <LiveBoard remoteOperators={remoteOperators} remoteMachines={remoteMachines} activeMine={activeMine}/>
+    return <LiveBoard/>
   }
   return <div style={{maxWidth:420,margin:"0 auto",height:"100vh",display:"flex",flexDirection:"column",background:C.bg,position:"relative",overflow:"hidden"}}>
     {showSignOut&&<SignOutConfirm onConfirm={handleSignOut} onCancel={()=>setShowSignOut(false)}/>}
-    {menuOpen&&<MenuOverlay user={user} allMachines={allMachines} onNav={t=>{setTab(t);setFlow("app")}} onAddMachine={()=>setFlow("addMachine")} onVehicleCheck={()=>setFlow("vehicleCheck")} onInspHistory={()=>{setFlow("inspHistory");setMenuOpen(false)}} onClose={()=>setMenuOpen(false)}/>}
-    {user&&!["onboarding","createMine","joinMine","subscription","vlSetup","login","app","vehicleCheck","addMachine","photoManager","settings","inspHistory"].includes(flow)&&
+    {menuOpen&&<MenuOverlay user={user} allMachines={allMachines} onNav={t=>{setTab(t);setFlow("app")}} onAddMachine={()=>setFlow("addMachine")} onVehicleCheck={()=>setFlow("vehicleCheck")} onClose={()=>setMenuOpen(false)}/>}
+    {user&&!["onboarding","createMine","joinMine","subscription","vlSetup","login","app","vehicleCheck","addMachine","photoManager","settings"].includes(flow)&&
       <div style={{flexShrink:0,background:`${C.surface}f2`,backdropFilter:"blur(10px)",borderBottom:`1px solid ${C.border}`,padding:"9px 15px",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
         <div style={{display:"flex",alignItems:"center",gap:10}}>
           <button onClick={()=>setMenuOpen(true)} style={{background:"none",border:`1px solid ${C.border}`,borderRadius:8,padding:"5px 10px",color:C.muted,fontSize:16,cursor:"pointer",lineHeight:1}}>☰</button>
@@ -2724,12 +2625,12 @@ function MineOpsApp() {
     {flow==="createMine"&&<div style={{flex:1,overflowY:"auto"}}><CreateMineFlow onComplete={m=>{setActiveMine(m);setPendingMine(m);setFlow("subscription")}} onBack={()=>setFlow("onboarding")}/></div>}
     {flow==="joinMine"&&<div style={{flex:1,overflowY:"auto"}}><JoinMineFlow onComplete={m=>{setActiveMine(m.mine);setFlow("login")}} onBack={()=>setFlow("onboarding")}/></div>}
     {flow==="subscription"&&<div style={{flex:1,overflowY:"auto"}}><SubscriptionScreen mineName={pendingMine?.mineName||"Your Mine"} onSelect={()=>setFlow("vlSetup")}/></div>}
-    {flow==="vlSetup"&&<div style={{flex:1,overflowY:"auto"}}><VisionLinkSetup activeMine={activeMine} onComplete={()=>setFlow("login")} onSkip={()=>setFlow("login")}/></div>}
+    {flow==="vlSetup"&&<div style={{flex:1,overflowY:"auto"}}><VisionLinkSetup onComplete={()=>setFlow("login")} onSkip={()=>setFlow("login")}/></div>}
     {flow==="login"&&<div style={{flex:1,overflowY:"auto"}}><Login onLogin={handleLogin} mine={activeMine}/></div>}
     {flow==="truckQ"&&<div style={{flex:1,overflowY:"auto"}}><TruckQuestion user={user} onAnswer={handleTruck}/></div>}
     {flow==="truckCheck"&&<div style={{flex:1,overflowY:"auto"}}><TruckCheckScreen onComplete={()=>setFlow(lv===1?"machines":"app")}/></div>}
-    {flow==="machines"&&<div style={{flex:1,overflowY:"auto"}}><MachineSelectScreen allMachines={allMachines} catDemo={catDemo} isAdmin={user?.role==="admin"} activeMine={activeMine} activeShiftId={activeShiftId} user={user} onAddMachine={()=>setFlow("addMachine")} onComplete={()=>setFlow("app")}/></div>}
-    {(flow==="app"||flow==="vehicleCheck"||flow==="addMachine"||flow==="photoManager"||flow==="settings"||flow==="inspHistory")&&<>
+    {flow==="machines"&&<div style={{flex:1,overflowY:"auto"}}><MachineSelectScreen allMachines={allMachines} catDemo={catDemo} isAdmin={user?.role==="admin"} onAddMachine={()=>setFlow("addMachine")} onComplete={()=>setFlow("app")}/></div>}
+    {(flow==="app"||flow==="vehicleCheck"||flow==="addMachine"||flow==="photoManager"||flow==="settings")&&<>
       <div style={{flexShrink:0,background:`${C.surface}f2`,backdropFilter:"blur(10px)",borderBottom:`1px solid ${C.border}`,padding:"9px 15px",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
         <div style={{display:"flex",alignItems:"center",gap:10}}>
           <button onClick={()=>setMenuOpen(true)} style={{background:"none",border:`1px solid ${C.border}`,borderRadius:8,padding:"5px 10px",color:C.muted,fontSize:16,cursor:"pointer",lineHeight:1}}>☰</button>
