@@ -1307,7 +1307,7 @@ function ScoringHub(){
             const pctAhead=nv!=null?(truck?Math.round(((nv-pv)/nv)*100):Math.round(((pv-nv)/nv)*100)):null;
             const pc=truck?cycCol(op.cycleMin):tphCol(op.tph);
             const tip=!isTop?coachTip(op,leader,truck,m):null;
-            const[showTip,setShowTip]=React.useState(false);
+            const[showTip,setShowTip]=useState(false);
             return <div key={i} style={{marginBottom:10}}>
               {/* Rank row */}
               <div style={{background:isTop?`${C.accent}0a`:C.card,border:`1.5px solid ${isTop?C.accent+"55":C.border}`,borderRadius:12,padding:"12px 14px"}}>
