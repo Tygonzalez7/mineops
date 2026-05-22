@@ -3467,7 +3467,37 @@ function RecordsHub({activeMine,allMachines,remoteOperators,onBack}){
   const[to,setTo]=useState("");
   const[opSearch,setOpSearch]=useState("");
   const[expanded,setExpanded]=useState(null);
+  // Lookup maps populated on initial load
+  const[locById,setLocById]=useState({});
+  const[extById,setExtById]=useState({});
+  // Lazy-loaded per-record caches
+  const[photosByTicket,setPhotosByTicket]=useState({});
+  const[signedUrls,setSignedUrls]=useState({});
+  const[lightbox,setLightbox]=useState(null); // url or null
 
+  // helpers
+  const opMap=useMemo(()=>new Map((remoteOperators||[]).map(o=>[o.id,o.name])),[remoteOperators]);
+  const machineMap=useMemo(()=>{const m={};(allMachines||[]).forEach(x=>{m[x.id]=x.model||x.id;});return m;},[allMachines]);
+  const machineLabel=id=>machineMap[id]||id||"—";
+  const opLabel=id=>opMap.get(id)||"—";
+  const loadSignedUrl=async(bucket,path)=>{
+    if(!path||signedUrls[path])return signedUrls[path];
+    try{
+      const{data}=await supabase.storage.from(bucket).createSignedUrl(path,3600);
+      if(data?.signedUrl){setSignedUrls(s=>({...s,[path]:data.signedUrl}));return data.signedUrl;}
+    }catch(e){console.error("signed url:",e);}
+    return null;
+  };
+  const loadHandoverPhotos=async ticketId=>{
+    if(photosByTicket[ticketId])return;
+    try{
+      const{data}=await supabase.from("handover_photos").select("*").eq("ticket_id",ticketId).order("created_at");
+      setPhotosByTicket(p=>({...p,[ticketId]:data||[]}));
+      for(const ph of data||[])loadSignedUrl("handover",ph.storage_path);
+    }catch(e){console.error("handover photos:",e);}
+  };
+
+  // Main fetch + populate fire-ext maps
   useEffect(()=>{
     if(!activeMine?.id){setLoading(false);setRecords([]);return;}
     let cancelled=false;
@@ -3476,8 +3506,6 @@ function RecordsHub({activeMine,allMachines,remoteOperators,onBack}){
       try{
         const fromIso=from?`${from}T00:00:00`:null;
         const toIso=to?`${to}T23:59:59`:null;
-        const opMap=new Map((remoteOperators||[]).map(o=>[o.id,o.name]));
-        const machineMap={};(allMachines||[]).forEach(m=>{machineMap[m.id]=m.model||m.id;});
         const limit=200;
         const r=async(table,tsCol,fn)=>{
           let q=supabase.from(table).select("*").eq("mine_id",activeMine.id).order(tsCol,{ascending:false}).limit(limit);
@@ -3487,55 +3515,54 @@ function RecordsHub({activeMine,allMachines,remoteOperators,onBack}){
           if(error){console.warn(`records ${table}:`,error.message);return[];}
           return(data||[]).map(fn).filter(Boolean);
         };
-        const[prestarts,exams,maints,downs,handovers,fires]=await Promise.all([
+        const[prestarts,exams,maints,downs,handovers,fires,locRes,extRes]=await Promise.all([
           r("prestart_logs","signed_off_at",row=>({
             id:`p_${row.id}`,type:"prestart",ts:new Date(row.signed_off_at).getTime(),iso:row.signed_off_at,
-            title:`Pre-start · ${machineMap[row.machine_id]||row.machine_id||"machine"}`,
+            title:`Pre-start · ${machineLabel(row.machine_id)}`,
             subtitle:`Fuel ${row.fuel_level??"—"}%`,
-            operatorName:opMap.get(row.operator_id)||"—",
-            machineId:row.machine_id,raw:row,
+            operatorName:opLabel(row.operator_id),machineId:row.machine_id,raw:row,
           })),
           r("workplace_exams","created_at",row=>({
             id:`w_${row.id}`,type:"workplace",ts:new Date(row.created_at||row.examined_at||Date.now()).getTime(),iso:row.created_at||row.examined_at,
             title:`Workplace exam · ${row.area||"—"}`,
-            subtitle:row.acknowledged_exam_id?"Acknowledged":(row.findings&&row.findings!=="none"?"Findings recorded":"No findings"),
-            operatorName:row.operator_name||opMap.get(row.operator_id)||"—",
-            raw:row,
+            subtitle:row.acknowledged_exam_id?"Acknowledged":(row.findings&&row.findings!=="none"?"⚠ Adverse findings":"No findings"),
+            operatorName:row.operator_name||opLabel(row.operator_id),raw:row,
           })),
           r("maintenance_logs","logged_at",row=>({
             id:`m_${row.id}`,type:"maintenance",ts:new Date(row.logged_at).getTime(),iso:row.logged_at,
-            title:`Maintenance · ${row.task_id||"task"} on ${machineMap[row.machine_id]||row.machine_id||"machine"}`,
-            subtitle:row.supervisor_approved_by?`Supervisor: ${row.supervisor_approved_by}`:(row.notes||""),
-            operatorName:row.technician_name||"—",
-            machineId:row.machine_id,raw:row,
+            title:`Maintenance · ${row.task_id||"task"} on ${machineLabel(row.machine_id)}`,
+            subtitle:row.supervisor_approved_by?`Supervisor: ${row.supervisor_approved_by}`:(row.notes||"").slice(0,80),
+            operatorName:row.technician_name||"—",machineId:row.machine_id,raw:row,
           })),
           r("downtime_logs","logged_at",row=>{
             const cat=DT_CATS[row.category]||{label:row.category,icon:"❓"};
             return{
               id:`d_${row.id}`,type:"downtime",ts:new Date(row.logged_at).getTime(),iso:row.logged_at,
-              title:`Downtime · ${cat.label} · ${machineMap[row.machine_id]||row.machine_id||"machine"}`,
-              subtitle:`${row.duration_min||0} min${row.flagged_for_supervisor?" · flagged":""}${row.note?` · "${row.note}"`:""}`,
-              operatorName:"—",
-              machineId:row.machine_id,raw:row,
+              title:`Downtime · ${cat.label} · ${machineLabel(row.machine_id)}`,
+              subtitle:`${row.duration_min||0} min${row.flagged_for_supervisor?" · flagged":""}${row.note?` · "${row.note.slice(0,40)}"`:""}`,
+              operatorName:"—",machineId:row.machine_id,raw:row,
             };
           }),
           r("handover_tickets","created_at",row=>({
             id:`h_${row.id}`,type:"handover",ts:new Date(row.created_at).getTime(),iso:row.created_at,
-            title:`Handover · ${machineMap[row.machine_id]||row.machine_id||"machine"} · sev ${row.severity}`,
+            title:`Handover · ${machineLabel(row.machine_id)}`,
             subtitle:`${row.status||"open"} · ${(row.description||"").slice(0,80)}`,
-            operatorName:row.created_by_name||"—",
-            machineId:row.machine_id,raw:row,
+            operatorName:row.created_by_name||"—",machineId:row.machine_id,raw:row,
           })),
           r("fire_extinguisher_inspections","inspected_at",row=>({
             id:`f_${row.id}`,type:"fire",ts:new Date(row.inspected_at).getTime(),iso:row.inspected_at,
             title:`Fire ext · ${row.status==="pass"?"PASS":"FAIL"}`,
-            subtitle:row.notes?row.notes.slice(0,80):(row.status==="pass"?"Inspection passed":"Inspection failed"),
-            operatorName:row.inspector_name||"—",
-            raw:row,
+            subtitle:row.notes?row.notes.slice(0,80):(row.status==="pass"?"Inspection passed":"⚠ Inspection failed"),
+            operatorName:row.inspector_name||"—",raw:row,
           })),
+          supabase.from("extinguisher_locations").select("id,name").eq("mine_id",activeMine.id),
+          supabase.from("fire_extinguishers").select("id,serial_number,serial_photo_path,location_id").eq("mine_id",activeMine.id),
         ]);
+        if(cancelled)return;
         const all=[...prestarts,...exams,...maints,...downs,...handovers,...fires].sort((a,b)=>b.ts-a.ts);
-        if(!cancelled)setRecords(all);
+        setRecords(all);
+        if(locRes?.data){const m={};for(const l of locRes.data)m[l.id]=l.name;setLocById(m);}
+        if(extRes?.data){const m={};for(const e of extRes.data)m[e.id]=e;setExtById(m);}
       }catch(e){console.error("records hub:",e);}
       finally{if(!cancelled)setLoading(false);}
     })();
@@ -3568,10 +3595,212 @@ function RecordsHub({activeMine,allMachines,remoteOperators,onBack}){
 
   const inp={background:C.surface,color:C.text,border:`1px solid ${C.border}`,borderRadius:8,padding:"8px 10px",fontSize:13,outline:"none",fontFamily:"inherit"};
 
+  // ── Detail building blocks ─────────────────────────────────────────────
+  const KV=({label,value,mono,full})=>(
+    <div style={{display:"flex",gap:10,padding:"5px 0",borderBottom:`1px solid ${C.border}22`,fontSize:12,alignItems:full?"flex-start":"center"}}>
+      <div style={{color:C.muted,minWidth:96,flexShrink:0,fontFamily:F,fontWeight:700,fontSize:9,letterSpacing:".06em",textTransform:"uppercase",paddingTop:full?3:0}}>{label}</div>
+      <div style={{color:C.text,wordBreak:"break-word",fontFamily:mono?"monospace":"inherit",flex:1,lineHeight:1.5}}>{value??"—"}</div>
+    </div>
+  );
+  const Check=({label,state})=>{
+    // state: true | false | null | undefined  → ✓ / ✗ / —
+    const passed=state===true||state==="pass";
+    const failed=state===false||state==="fail";
+    const col=passed?C.success:failed?C.danger:C.muted;
+    const icon=passed?"✓":failed?"✗":"–";
+    return <div style={{display:"flex",alignItems:"center",gap:10,padding:"4px 0",fontSize:12}}>
+      <span style={{width:18,height:18,borderRadius:5,background:passed||failed?col:"transparent",border:passed||failed?"none":`1.5px solid ${col}`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,color:passed||failed?"#000":col,flexShrink:0,fontWeight:900}}>{icon}</span>
+      <span style={{color:C.text,flex:1}}>{label}</span>
+    </div>;
+  };
+  const SectionHdr=({label})=>(
+    <div style={{fontFamily:F,fontWeight:700,fontSize:9,color:C.muted,letterSpacing:".1em",textTransform:"uppercase",margin:"12px 0 4px",paddingTop:10,borderTop:`1px solid ${C.border}22`}}>{label}</div>
+  );
+  const SeverityBadge=({n})=>{
+    const colors=[C.info,C.success,C.amber,"#e07c2e",C.danger];
+    const labels=["Info","Minor","Notable","Major","Critical"];
+    const i=Math.max(1,Math.min(5,n||1))-1;
+    return <span style={{background:`${colors[i]}22`,color:colors[i],border:`1px solid ${colors[i]}55`,borderRadius:6,padding:"3px 8px",fontSize:10,fontFamily:F,fontWeight:700,whiteSpace:"nowrap"}}>SEV {n} · {labels[i]}</span>;
+  };
+  const StatusBadge=({status})=>{
+    const m={open:C.danger,in_progress:C.amber,awaiting_verification:C.info,fixed:C.info,verified:C.success,closed:C.success,pass:C.success,fail:C.danger};
+    const col=m[status]||C.muted;
+    return <span style={{background:`${col}22`,color:col,border:`1px solid ${col}55`,borderRadius:6,padding:"3px 8px",fontSize:10,fontFamily:F,fontWeight:700,textTransform:"uppercase",whiteSpace:"nowrap"}}>{(status||"—").replace(/_/g," ")}</span>;
+  };
+  const PhotoThumb=({url,size=64,onClick,label})=>(
+    <button onClick={onClick} disabled={!url} style={{width:size,height:size,borderRadius:8,background:C.bg,border:`1px solid ${C.border}`,padding:0,overflow:"hidden",cursor:url?"pointer":"default",position:"relative",flexShrink:0}}>
+      {url?<img src={url} alt="" style={{width:"100%",height:"100%",objectFit:"cover",display:"block"}}/>
+          :<div style={{width:"100%",height:"100%",display:"flex",alignItems:"center",justifyContent:"center",color:C.muted,fontSize:10}}>…</div>}
+      {label&&<div style={{position:"absolute",bottom:0,left:0,right:0,background:"rgba(0,0,0,.6)",color:"#fff",fontSize:8,padding:"2px 4px",fontFamily:F,fontWeight:700,letterSpacing:".04em",textTransform:"uppercase"}}>{label}</div>}
+    </button>
+  );
+
+  // ── Per-type renderers ─────────────────────────────────────────────────
+  const renderPrestart=raw=>{
+    const checks=raw.checks_passed||{};
+    return<>
+      <KV label="Machine" value={machineLabel(raw.machine_id)}/>
+      <KV label="Operator" value={opLabel(raw.operator_id)}/>
+      <KV label="Fuel level" value={raw.fuel_level!=null?`${raw.fuel_level}%`:null}/>
+      <KV label="Signed off" value={raw.signed_off_at?new Date(raw.signed_off_at).toLocaleString():null}/>
+      <SectionHdr label="Pre-start checks"/>
+      {PRESTART.map(c=><Check key={c.id} label={c.label} state={checks[c.id]??false}/>)}
+    </>;
+  };
+  const WORKPLACE_CHECKS=[
+    ["ground","Ground conditions"],
+    ["walls","Walls / highwall / face"],
+    ["equipment","Equipment & guarding"],
+    ["access","Access & egress"],
+    ["housekeeping","Housekeeping"],
+  ];
+  const renderWorkplace=raw=>{
+    const conds=raw.conditions_checked||{};
+    const adverse=raw.findings==="adverse";
+    return<>
+      <KV label="Area" value={raw.area}/>
+      {raw.acknowledged_exam_id&&<KV label="Inherited" value={`Acknowledged from earlier exam (${String(raw.acknowledged_exam_id).slice(0,8)}…)`}/>}
+      <KV label="Operator" value={raw.operator_name||opLabel(raw.operator_id)}/>
+      <KV label="Regulator" value={(raw.regulator||"msha").toUpperCase()}/>
+      <SectionHdr label="Conditions"/>
+      {WORKPLACE_CHECKS.map(([k,lb])=><Check key={k} label={lb} state={conds[k]}/>)}
+      <Check label="Task known to operator" state={raw.task_known}/>
+      <Check label="Area safe to work" state={raw.area_safe}/>
+      <SectionHdr label="Findings"/>
+      {adverse?<>
+        <div style={{display:"flex",alignItems:"center",gap:8,padding:"4px 0"}}>
+          <StatusBadge status="fail"/>
+          <span style={{fontFamily:F,fontWeight:700,fontSize:12,color:C.danger}}>Adverse conditions reported</span>
+        </div>
+        {raw.findings_detail&&<KV label="Detail" value={raw.findings_detail} full/>}
+        {raw.corrective_action&&<KV label="Corrective" value={raw.corrective_action} full/>}
+        {raw.reported_to&&<KV label="Reported to" value={raw.reported_to}/>}
+      </>:<div style={{padding:"4px 0",fontSize:12,color:C.success,fontFamily:F,fontWeight:700}}>✓ No adverse conditions</div>}
+    </>;
+  };
+  const renderMaintenance=raw=>{
+    const smh=raw.smh_at_service??raw.hours_at_service;
+    return<>
+      <KV label="Machine" value={machineLabel(raw.machine_id)}/>
+      <KV label="Task" value={raw.task_id}/>
+      <KV label="SMH at service" value={smh!=null?String(smh):null}/>
+      <KV label="Technician" value={raw.technician_name}/>
+      {raw.supervisor_approved_by&&<KV label="Supervisor" value={raw.supervisor_approved_by}/>}
+      <KV label="Logged" value={raw.logged_at?new Date(raw.logged_at).toLocaleString():null}/>
+      {raw.notes&&<KV label="Notes" value={raw.notes} full/>}
+    </>;
+  };
+  const renderDowntime=raw=>{
+    const cat=DT_CATS[raw.category]||{label:raw.category,icon:"❓"};
+    return<>
+      <div style={{display:"flex",alignItems:"center",gap:8,padding:"4px 0 10px"}}>
+        <span style={{fontSize:22}}>{cat.icon}</span>
+        <span style={{fontFamily:F,fontWeight:900,fontSize:15,color:C.text}}>{cat.label}</span>
+        {raw.is_operator_fault&&<span style={{background:`${C.danger}22`,color:C.danger,border:`1px solid ${C.danger}55`,borderRadius:6,padding:"2px 7px",fontSize:9,fontFamily:F,fontWeight:700,marginLeft:"auto"}}>OP FAULT</span>}
+        {raw.flagged_for_supervisor&&<span style={{background:`${C.amber}22`,color:C.amber,border:`1px solid ${C.amber}55`,borderRadius:6,padding:"2px 7px",fontSize:9,fontFamily:F,fontWeight:700}}>FLAGGED</span>}
+      </div>
+      <KV label="Machine" value={machineLabel(raw.machine_id)}/>
+      <KV label="Duration" value={raw.duration_min!=null?`${raw.duration_min} min`:null}/>
+      <KV label="Category" value={cat.label}/>
+      <KV label="Logged" value={raw.logged_at?new Date(raw.logged_at).toLocaleString():null}/>
+      {raw.note&&<KV label="Notes" value={raw.note} full/>}
+    </>;
+  };
+  const renderHandover=raw=>{
+    const photos=photosByTicket[raw.id]||null;
+    const stages=["original","in_progress","fix","verification"];
+    const stageLabels={original:"Original",in_progress:"In progress",fix:"Fix",verification:"Verification"};
+    return<>
+      <div style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"center",padding:"4px 0 10px"}}>
+        <SeverityBadge n={raw.severity}/>
+        <StatusBadge status={raw.status}/>
+      </div>
+      <KV label="Machine" value={machineLabel(raw.machine_id)}/>
+      <KV label="Created by" value={raw.created_by_name}/>
+      <KV label="Created" value={raw.created_at?new Date(raw.created_at).toLocaleString():null}/>
+      {raw.assigned_to&&<KV label="Assigned to" value={raw.assigned_to}/>}
+      <KV label="Description" value={raw.description} full/>
+      {raw.status==="closed"&&<>
+        {raw.closed_by_name&&<KV label="Closed by" value={raw.closed_by_name}/>}
+        {raw.closed_at&&<KV label="Closed" value={new Date(raw.closed_at).toLocaleString()}/>}
+        {raw.resolution_notes&&<KV label="Resolution" value={raw.resolution_notes} full/>}
+      </>}
+      <SectionHdr label={`Photos${photos?` · ${photos.length}`:""}`}/>
+      {photos===null?<div style={{padding:"6px 0",color:C.muted,fontSize:11}}>Loading photos…</div>
+        :photos.length===0?<div style={{padding:"6px 0",color:C.muted,fontSize:11}}>No photos attached.</div>
+        :stages.map(st=>{
+          const subset=photos.filter(p=>p.stage===st);
+          if(subset.length===0)return null;
+          return<div key={st} style={{marginTop:6}}>
+            <div style={{fontSize:10,color:C.muted,fontFamily:F,fontWeight:700,letterSpacing:".08em",textTransform:"uppercase",marginBottom:4}}>{stageLabels[st]} · {subset.length}</div>
+            <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+              {subset.map(p=>{
+                const url=signedUrls[p.storage_path];
+                return<PhotoThumb key={p.id} url={url} onClick={()=>url&&setLightbox(url)}/>;
+              })}
+            </div>
+          </div>;
+        })}
+    </>;
+  };
+  const renderFire=raw=>{
+    const locName=raw.location_id?locById[raw.location_id]:null;
+    const ext=raw.extinguisher_id?extById[raw.extinguisher_id]:null;
+    const photoPath=raw.serial_photo_path||ext?.serial_photo_path;
+    const photoUrl=photoPath?signedUrls[photoPath]:null;
+    return<>
+      <div style={{display:"flex",gap:8,alignItems:"center",padding:"4px 0 10px"}}>
+        <StatusBadge status={raw.status}/>
+        <span style={{fontFamily:F,fontWeight:900,fontSize:13,color:raw.status==="pass"?C.success:C.danger}}>{raw.status==="pass"?"Inspection passed":"⚠ Inspection failed"}</span>
+      </div>
+      <KV label="Location" value={locName||(raw.location_id?String(raw.location_id).slice(0,8)+"…":null)}/>
+      <KV label="Serial" value={ext?.serial_number||"(pending OCR)"} mono/>
+      <KV label="Inspector" value={raw.inspector_name}/>
+      <KV label="Inspected" value={raw.inspected_at?new Date(raw.inspected_at).toLocaleString():null}/>
+      {raw.notes&&<KV label="Notes" value={raw.notes} full/>}
+      {photoPath&&<>
+        <SectionHdr label="Serial-tag photo"/>
+        <div style={{display:"flex",gap:6,paddingTop:2}}>
+          <PhotoThumb url={photoUrl} size={96} onClick={()=>photoUrl&&setLightbox(photoUrl)} label="Serial"/>
+          {!photoUrl&&<button onClick={()=>loadSignedUrl("fire-extinguishers",photoPath)} style={{background:"none",border:`1px solid ${C.border}`,borderRadius:7,padding:"4px 10px",color:C.muted,fontSize:11,fontFamily:F,fontWeight:700,cursor:"pointer",alignSelf:"center"}}>Load photo</button>}
+        </div>
+      </>}
+    </>;
+  };
+
+  const renderDetail=rec=>{
+    switch(rec.type){
+      case"prestart":return renderPrestart(rec.raw);
+      case"workplace":return renderWorkplace(rec.raw);
+      case"maintenance":return renderMaintenance(rec.raw);
+      case"downtime":return renderDowntime(rec.raw);
+      case"handover":return renderHandover(rec.raw);
+      case"fire":return renderFire(rec.raw);
+      default:return<div style={{fontSize:11,color:C.muted}}>Unknown record type.</div>;
+    }
+  };
+
+  const onExpand=rec=>{
+    const willOpen=expanded!==rec.id;
+    setExpanded(willOpen?rec.id:null);
+    if(!willOpen)return;
+    if(rec.type==="handover")loadHandoverPhotos(rec.raw.id);
+    if(rec.type==="fire"){
+      const p=rec.raw.serial_photo_path||extById[rec.raw.extinguisher_id]?.serial_photo_path;
+      if(p)loadSignedUrl("fire-extinguishers",p);
+    }
+  };
+
   return <div style={{paddingBottom:80}}>
+    {/* Lightbox */}
+    {lightbox&&<div onClick={()=>setLightbox(null)} style={{position:"fixed",inset:0,background:"rgba(0,0,0,.92)",zIndex:600,display:"flex",alignItems:"center",justifyContent:"center",padding:20}}>
+      <img src={lightbox} alt="" style={{maxWidth:"100%",maxHeight:"100%",objectFit:"contain",borderRadius:10}}/>
+      <button onClick={e=>{e.stopPropagation();setLightbox(null);}} style={{position:"absolute",top:14,right:14,background:"rgba(0,0,0,.6)",border:`1px solid ${C.border}`,borderRadius:8,padding:"6px 12px",color:"#fff",fontSize:13,fontFamily:F,fontWeight:700,cursor:"pointer"}}>✕ Close</button>
+    </div>}
+
     <PageHdr title="Records" sub={`Inspection archive · everyone in this mine${activeMine?.name?` · ${activeMine.name}`:""}`} back onBack={onBack}/>
 
-    {/* Filter chips */}
+    {/* Filter chips + date range + operator search */}
     <div style={{padding:"10px 12px 6px",borderBottom:`1px solid ${C.border}`,background:`${C.surface}cc`,position:"sticky",top:0,zIndex:10,backdropFilter:"blur(8px)"}}>
       <div style={{display:"flex",gap:6,overflowX:"auto",paddingBottom:8,marginBottom:8,WebkitOverflowScrolling:"touch"}}>
         {RECORD_TYPES.map(t=>{
@@ -3583,10 +3812,9 @@ function RecordsHub({activeMine,allMachines,remoteOperators,onBack}){
           </button>;
         })}
       </div>
-      {/* Date range + operator search */}
       <div style={{display:"flex",gap:6,marginBottom:0}}>
-        <input type="date" value={from} onChange={e=>setFrom(e.target.value)} style={{...inp,flex:1,minWidth:0}} placeholder="From"/>
-        <input type="date" value={to} onChange={e=>setTo(e.target.value)} style={{...inp,flex:1,minWidth:0}} placeholder="To"/>
+        <input type="date" value={from} onChange={e=>setFrom(e.target.value)} style={{...inp,flex:1,minWidth:0}}/>
+        <input type="date" value={to} onChange={e=>setTo(e.target.value)} style={{...inp,flex:1,minWidth:0}}/>
         <input value={opSearch} onChange={e=>setOpSearch(e.target.value)} placeholder="Operator name" style={{...inp,flex:1.2,minWidth:0}}/>
       </div>
       {(from||to||opSearch||filter!=="all")&&<button onClick={()=>{setFilter("all");setFrom("");setTo("");setOpSearch("");}}
@@ -3607,7 +3835,7 @@ function RecordsHub({activeMine,allMachines,remoteOperators,onBack}){
           const meta=RECORD_TYPES.find(t=>t.id===rec.type)||RECORD_TYPES[0];
           const isOpen=expanded===rec.id;
           return<div key={rec.id} style={{background:C.card,border:`1px solid ${isOpen?meta.color+"66":C.border}`,borderLeft:`3px solid ${meta.color}`,borderRadius:10,marginBottom:6,overflow:"hidden"}}>
-            <button onClick={()=>setExpanded(isOpen?null:rec.id)}
+            <button onClick={()=>onExpand(rec)}
               style={{width:"100%",background:"none",border:"none",padding:"10px 12px",display:"flex",alignItems:"center",gap:10,cursor:"pointer",textAlign:"left"}}>
               <span style={{fontSize:18,flexShrink:0}}>{meta.icon}</span>
               <div style={{flex:1,minWidth:0}}>
@@ -3616,14 +3844,8 @@ function RecordsHub({activeMine,allMachines,remoteOperators,onBack}){
               </div>
               <span style={{color:C.muted,fontSize:14,flexShrink:0,transform:isOpen?"rotate(90deg)":"none",transition:"transform .15s"}}>›</span>
             </button>
-            {isOpen&&<div style={{borderTop:`1px solid ${C.border}`,padding:"10px 12px",background:`${C.surface}`,fontSize:12,color:C.textSub}}>
-              {Object.entries(rec.raw).filter(([k,v])=>v!=null&&v!==""&&!["id","mine_id"].includes(k)).map(([k,v])=>{
-                const display=typeof v==="object"?JSON.stringify(v,null,2):String(v);
-                return<div key={k} style={{display:"flex",gap:10,padding:"3px 0",borderBottom:`1px solid ${C.border}22`,fontFamily:typeof v==="object"?"monospace":"inherit",fontSize:typeof v==="object"?10:12}}>
-                  <div style={{color:C.muted,minWidth:120,flexShrink:0,fontFamily:F,fontWeight:700,fontSize:10,letterSpacing:".04em",textTransform:"uppercase",paddingTop:2}}>{k}</div>
-                  <div style={{color:C.text,wordBreak:"break-word",whiteSpace:typeof v==="object"?"pre-wrap":"normal"}}>{display}</div>
-                </div>;
-              })}
+            {isOpen&&<div style={{borderTop:`1px solid ${C.border}`,padding:"8px 12px 12px",background:C.surface}}>
+              {renderDetail(rec)}
             </div>}
           </div>;
         })}
@@ -4484,7 +4706,7 @@ function MineOpsApp() {
   return <div style={{maxWidth:420,margin:"0 auto",height:"100vh",display:"flex",flexDirection:"column",background:C.bg,position:"relative",overflow:"hidden"}}>
     {showSignOut&&<SignOutConfirm onConfirm={handleSignOut} onCancel={()=>setShowSignOut(false)}/>}
     {menuOpen&&<MenuOverlay user={user} allMachines={allMachines} activeMine={activeMine} onNav={t=>{if(t==="settings"||t==="tickets"||t==="reportIssue"||t==="ticketDetail"||t==="workplaceExam"||t==="workplaceAreas"||t==="fireInspect"||t==="extinguisherLocations"){setFlow(t);}else{setTab(t);setFlow("app");}}} onAddMachine={()=>setFlow("addMachine")} onVehicleCheck={()=>setFlow("vehicleCheck")} onInspHistory={()=>{setFlow("inspHistory");setMenuOpen(false)}} onClose={()=>setMenuOpen(false)}/>}
-    {user&&!["onboarding","createMine","joinMine","subscription","vlSetup","login","app","vehicleCheck","addMachine","photoManager","settings","plants","inspHistory","extinguisherLocations"].includes(flow)&&
+    {user&&!["onboarding","createMine","joinMine","subscription","vlSetup","login","app","vehicleCheck","addMachine","photoManager","settings","plants","inspHistory","extinguisherLocations","workplaceAreas"].includes(flow)&&
       <div style={{flexShrink:0,background:`${C.surface}f2`,backdropFilter:"blur(10px)",borderBottom:`1px solid ${C.border}`,padding:"9px 15px",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
         <div style={{display:"flex",alignItems:"center",gap:10}}>
           <button onClick={()=>setMenuOpen(true)} style={{background:"none",border:`1px solid ${C.border}`,borderRadius:8,padding:"5px 10px",color:C.muted,fontSize:16,cursor:"pointer",lineHeight:1}}>☰</button>
