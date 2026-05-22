@@ -1552,6 +1552,7 @@ function MenuOverlay({user,onNav,onAddMachine,onVehicleCheck,onClose,allMachines
           {ROLES[user?.role]?.level===1&&<Item icon="🪣" label="My Operations" sub="Scoop logging · idle tracking · blast schedule" onClick={()=>{onNav("ops");onClose();}}/>}
         </Section>
         <Section title="Checks">
+          <Item icon="🗺" label="Workplace Exam" sub="MSHA daily inspection · required before work" color={C.danger} onClick={()=>{onNav("workplaceExam");onClose();}}/>
           <Item icon="✅" label="Machine Check" sub="HSMP pre-start · MQSHA minimum" color={C.success} onClick={()=>{onNav("checks");onClose();}}/>
           <Item icon="🗺" label="Site Area Check" sub="Mine Code minimum" color={C.info} onClick={()=>{onNav("checks");onClose();}}/>
           <Item icon="🔧" label="Maintenance" sub="Grease · filter blow · VisionLink fluids" color={C.accent} onClick={()=>{onNav("checks");onClose();}}/>
@@ -1700,7 +1701,7 @@ function PlantPicker({activeMine,user,value,onChange}){
   </div>;
 }
 // ── Settings Hub ──────────────────────────────────────────────────────────
-function SettingsScreen({onClose,onNavPlants}){
+function SettingsScreen({onClose,onNavPlants,onNavWorkplaceAreas}){
   return <div style={{paddingBottom:60}}>
     <PageHdr title="Settings" sub="Mine setup · admin only" back onBack={onClose}/>
     <div style={{padding:"14px 16px"}}>
@@ -2002,6 +2003,238 @@ function TicketDetailScreen({ticketId,activeMine,user,allMachines,onBack}){
             </button>
           </div>
         </div>
+      </>}
+    </div>
+  </div>;
+}
+// ── Workplace Areas Admin (settings) ──────────────────────────────────────
+function WorkplaceAreasAdminScreen({activeMine,onBack}){
+  const[areas,setAreas]=useState([]);
+  const[loading,setLoading]=useState(true);
+  const[showCreate,setShowCreate]=useState(false);
+  const[newName,setNewName]=useState("");const[newDesc,setNewDesc]=useState("");
+  const[saving,setSaving]=useState(false);const[err,setErr]=useState("");
+  const load=async()=>{
+    if(!activeMine?.id){setLoading(false);return;}
+    setLoading(true);
+    const{data,error}=await supabase.from("workplace_areas").select("*").eq("mine_id",activeMine.id).order("created_at",{ascending:true});
+    if(!error)setAreas(data||[]);
+    setLoading(false);
+  };
+  useEffect(()=>{load();},[activeMine?.id]);
+  const create=async()=>{
+    if(!newName.trim()||!activeMine?.id)return;
+    setSaving(true);setErr("");
+    try{
+      const{error}=await supabase.from("workplace_areas").insert({mine_id:activeMine.id,name:newName.trim(),description:newDesc.trim()||null});
+      if(error)throw error;
+      setNewName("");setNewDesc("");setShowCreate(false);await load();
+    }catch(e){setErr(e.message||"Could not create area");}finally{setSaving(false);}
+  };
+  const archive=async(id)=>{
+    if(!confirm("Archive this area? Operators won't see it in the picker anymore."))return;
+    await supabase.from("workplace_areas").update({is_active:false}).eq("id",id);
+    await load();
+  };
+  const inp={background:C.surface,color:C.text,border:`1px solid ${C.border}`,borderRadius:9,padding:"11px 14px",fontSize:14,width:"100%",outline:"none"};
+  return <div style={{paddingBottom:80}}>
+    <PageHdr title="Workplace Areas" sub="Pit benches · crusher stations · haul roads · plant areas" back onBack={onBack}/>
+    <div style={{padding:"14px 16px"}}>
+      {loading?<div style={{textAlign:"center",padding:40,color:C.muted}}>Loading…</div>:areas.length===0&&!showCreate?
+        <div style={{background:`${C.accent}08`,border:`1px solid ${C.accent}22`,borderRadius:14,padding:"22px 16px",textAlign:"center",marginBottom:14}}>
+          <div style={{fontSize:42,marginBottom:8}}>��</div>
+          <div style={{fontFamily:F,fontWeight:900,fontSize:18,color:C.accent,marginBottom:4}}>No areas defined yet</div>
+          <div style={{fontSize:12,color:C.muted,lineHeight:1.5,marginBottom:14}}>Define the working areas operators inspect each shift. Examples: "Pit 1 Bench 3", "Crusher Station", "Main Haul Road".</div>
+        </div>:null}
+      {areas.map(a=>(
+        <div key={a.id} style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:12,padding:"13px 14px",marginBottom:8,opacity:a.is_active?1:0.5}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
+            <div style={{flex:1}}>
+              <div style={{fontFamily:F,fontWeight:900,fontSize:16,color:C.text}}>{a.name}{!a.is_active&&<span style={{fontSize:10,color:C.muted,marginLeft:8}}>· archived</span>}</div>
+              {a.description&&<div style={{fontSize:12,color:C.muted,marginTop:3}}>{a.description}</div>}
+            </div>
+            {a.is_active&&<button onClick={()=>archive(a.id)} style={{background:"none",border:`1px solid ${C.border}`,borderRadius:7,padding:"5px 10px",color:C.muted,fontSize:11,fontFamily:F,fontWeight:700,cursor:"pointer"}}>Archive</button>}
+          </div>
+        </div>
+      ))}
+      {showCreate?
+        <div style={{background:C.card,border:`1px solid ${C.accent}44`,borderRadius:12,padding:"14px",marginTop:10}}>
+          <div style={{fontFamily:F,fontWeight:900,fontSize:13,color:C.accent,marginBottom:10}}>New area</div>
+          <div style={{fontSize:11,color:C.muted,marginBottom:5}}>Name *</div>
+          <input value={newName} onChange={e=>setNewName(e.target.value)} placeholder="e.g. Pit 1 Bench 3" style={{...inp,marginBottom:10}}/>
+          <div style={{fontSize:11,color:C.muted,marginBottom:5}}>Description (optional)</div>
+          <input value={newDesc} onChange={e=>setNewDesc(e.target.value)} placeholder="e.g. North wall · active mining" style={{...inp,marginBottom:10}}/>
+          {err&&<div style={{fontSize:12,color:C.danger,marginBottom:8}}>⚠ {err}</div>}
+          <div style={{display:"flex",gap:8}}>
+            <button onClick={()=>{setShowCreate(false);setNewName("");setNewDesc("");setErr("");}} style={{flex:1,background:"none",border:`1px solid ${C.border}`,borderRadius:9,padding:"11px",color:C.muted,fontFamily:F,fontWeight:700,fontSize:13,cursor:"pointer"}}>Cancel</button>
+            <button onClick={create} disabled={!newName.trim()||saving} style={{flex:1,background:newName.trim()?C.success:C.border,color:newName.trim()?"#000":C.muted,border:"none",borderRadius:9,padding:"11px",fontFamily:F,fontWeight:900,fontSize:13,cursor:newName.trim()?"pointer":"default"}}>{saving?"Saving…":"Create"}</button>
+          </div>
+        </div>:
+        <button onClick={()=>setShowCreate(true)} style={{width:"100%",background:`linear-gradient(135deg,${C.accent},#d4881e)`,color:"#000",border:"none",borderRadius:12,padding:"15px",fontFamily:F,fontWeight:900,fontSize:16,cursor:"pointer",marginTop:10}}>+ Add Area</button>
+      }
+    </div>
+  </div>;
+}
+// ── Workplace Exam Screen (MSHA daily inspection) ─────────────────────────
+function WorkplaceExamScreen({activeMine,activeShiftId,user,onComplete,onBack}){
+  const[areas,setAreas]=useState([]);
+  const[loading,setLoading]=useState(true);
+  const[areaId,setAreaId]=useState("");
+  const[customArea,setCustomArea]=useState("");
+  const[useCustom,setUseCustom]=useState(false);
+  const[existingExam,setExistingExam]=useState(null); // exam from earlier today by someone else
+  const[checks,setChecks]=useState({ground:null,walls:null,equipment:null,access:null,housekeeping:null});
+  const[taskKnown,setTaskKnown]=useState(null);
+  const[areaSafe,setAreaSafe]=useState(null);
+  const[findings,setFindings]=useState("none");
+  const[findingsDetail,setFindingsDetail]=useState("");
+  const[corrective,setCorrective]=useState("");
+  const[reportedTo,setReportedTo]=useState("");
+  const[saving,setSaving]=useState(false);
+  const[err,setErr]=useState("");
+  // Load areas list
+  useEffect(()=>{
+    if(!activeMine?.id){setLoading(false);return;}
+    (async()=>{
+      const{data}=await supabase.from("workplace_areas").select("*").eq("mine_id",activeMine.id).eq("is_active",true).order("name");
+      setAreas(data||[]);
+      setLoading(false);
+    })();
+  },[activeMine?.id]);
+  // When area changes, check for an existing exam today
+  useEffect(()=>{
+    if(!activeMine?.id)return;
+    const areaName=useCustom?customArea.trim():(areas.find(a=>a.id===areaId)?.name||"");
+    if(!areaName){setExistingExam(null);return;}
+    (async()=>{
+      const since=new Date();since.setHours(0,0,0,0);
+      const{data}=await supabase.from("workplace_exams")
+        .select("*").eq("mine_id",activeMine.id)
+        .eq("area",areaName)
+        .gte("examined_at",since.toISOString())
+        .order("examined_at",{ascending:false})
+        .limit(1);
+      setExistingExam((data&&data.length>0)?data[0]:null);
+    })();
+  },[areaId,customArea,useCustom,activeMine?.id]);
+  const checkItems=[
+    {key:"ground",label:"Ground conditions",sub:"Floor stability · slip/trip hazards · drainage"},
+    {key:"walls",label:"Walls / highwall / face",sub:"Loose material · cracks · proper angles"},
+    {key:"equipment",label:"Equipment & guarding",sub:"Guards in place · emergency stops · barricades"},
+    {key:"access",label:"Access & egress",sub:"Clear escape routes · safe travel paths"},
+    {key:"housekeeping",label:"Housekeeping",sub:"Spills · debris · tools · stored materials"},
+  ];
+  const acknowledgePrior=async()=>{
+    if(!existingExam||!activeMine?.id)return;
+    setSaving(true);setErr("");
+    try{
+      const areaName=useCustom?customArea.trim():(areas.find(a=>a.id===areaId)?.name||"");
+      const{data:auth}=await supabase.auth.getUser();
+      const{error}=await supabase.from("workplace_exams").insert({
+        mine_id:activeMine.id,
+        shift_id:activeShiftId||null,
+        operator_id:auth?.user?.id||null,
+        operator_name:user?.name||null,
+        area:areaName,
+        area_id:useCustom?null:(areaId||null),
+        acknowledged_exam_id:existingExam.id,
+        task_known:true,
+        area_safe:true,
+        findings:"none",
+        regulator:"msha",
+      });
+      if(error)throw error;
+      onComplete&&onComplete();
+    }catch(e){setErr(e.message||"Could not acknowledge");}finally{setSaving(false);}
+  };
+  const areaName=useCustom?customArea.trim():(areas.find(a=>a.id===areaId)?.name||"");
+  const allChecksDone=Object.values(checks).every(v=>v!==null);
+  const findingsOk=findings==="none"||(findingsDetail.trim()&&corrective.trim());
+  const valid=areaName&&allChecksDone&&taskKnown!==null&&areaSafe!==null&&findingsOk;
+  const submit=async()=>{
+    if(!valid||!activeMine?.id)return;
+    setSaving(true);setErr("");
+    try{
+      const{data:auth}=await supabase.auth.getUser();
+      const{error}=await supabase.from("workplace_exams").insert({
+        mine_id:activeMine.id,
+        shift_id:activeShiftId||null,
+        operator_id:auth?.user?.id||null,
+        operator_name:user?.name||null,
+        area:areaName,
+        area_id:useCustom?null:(areaId||null),
+        task_known:taskKnown,
+        area_safe:areaSafe,
+        conditions_checked:checks,
+        findings,
+        findings_detail:findings==="adverse"?findingsDetail.trim():null,
+        corrective_action:findings==="adverse"?corrective.trim():null,
+        reported_to:findings==="adverse"?reportedTo.trim()||null:null,
+        regulator:"msha",
+      });
+      if(error)throw error;
+      onComplete&&onComplete();
+    }catch(e){setErr(e.message||"Could not save exam");}finally{setSaving(false);}
+  };
+  const YesNo=({value,onChange,danger})=>(<div style={{display:"flex",gap:8,marginBottom:10}}>
+    <button onClick={()=>onChange(true)} style={{flex:1,background:value===true?C.success:"transparent",color:value===true?"#000":C.success,border:`2px solid ${C.success}`,borderRadius:10,padding:"10px",fontFamily:F,fontWeight:900,fontSize:14,cursor:"pointer"}}>✓ Yes</button>
+    <button onClick={()=>onChange(false)} style={{flex:1,background:value===false?(danger?C.danger:C.amber):"transparent",color:value===false?"#000":(danger?C.danger:C.amber),border:`2px solid ${danger?C.danger:C.amber}`,borderRadius:10,padding:"10px",fontFamily:F,fontWeight:900,fontSize:14,cursor:"pointer"}}>✗ No</button>
+  </div>);
+  const inp={background:C.surface,color:C.text,border:`1px solid ${C.border}`,borderRadius:9,padding:"11px 14px",fontSize:14,width:"100%",outline:"none"};
+  if(loading)return <div style={{padding:40,textAlign:"center",color:C.muted}}>Loading…</div>;
+  return <div style={{paddingBottom:80}}>
+    <PageHdr title="Workplace Exam" sub="MSHA 30 CFR § 56.18002 daily inspection" back onBack={onBack}/>
+    <div style={{padding:"14px 16px"}}>
+      <div style={{fontSize:11,color:C.muted,marginBottom:5,fontFamily:F,fontWeight:700,letterSpacing:".08em",textTransform:"uppercase"}}>Working Area *</div>
+      {areas.length>0&&!useCustom&&<select value={areaId} onChange={e=>setAreaId(e.target.value)} style={{...inp,marginBottom:8}}>
+        <option value="">— Select area —</option>
+        {areas.map(a=><option key={a.id} value={a.id}>{a.name}</option>)}
+      </select>}
+      {useCustom&&<input value={customArea} onChange={e=>setCustomArea(e.target.value)} placeholder="Describe the area" style={{...inp,marginBottom:8}}/>}
+      <button onClick={()=>{setUseCustom(c=>!c);setAreaId("");setCustomArea("");}} style={{background:"none",border:"none",color:C.info,fontSize:12,fontFamily:F,fontWeight:700,cursor:"pointer",marginBottom:14}}>{useCustom?"← Pick from list instead":"Or enter a custom area →"}</button>
+      {existingExam&&areaName&&<div style={{background:`${C.success}10`,border:`1px solid ${C.success}44`,borderRadius:12,padding:"14px",marginBottom:16}}>
+        <div style={{fontFamily:F,fontWeight:900,fontSize:13,color:C.success,marginBottom:6}}>✓ Already examined today</div>
+        <div style={{fontSize:12,color:C.textSub,lineHeight:1.5,marginBottom:10}}>
+          <strong>{existingExam.operator_name||"Someone"}</strong> signed off this area at {new Date(existingExam.examined_at).toLocaleTimeString([],{hour:"numeric",minute:"2-digit"})}.
+          {existingExam.findings==="adverse"&&<div style={{color:C.amber,marginTop:6}}>⚠ They flagged adverse conditions: {existingExam.findings_detail}</div>}
+        </div>
+        <button onClick={acknowledgePrior} disabled={saving} style={{width:"100%",background:C.success,color:"#000",border:"none",borderRadius:10,padding:"12px",fontFamily:F,fontWeight:900,fontSize:14,cursor:"pointer"}}>{saving?"Saving…":"✓ Acknowledge — Conditions Still Safe"}</button>
+        <div style={{fontSize:10,color:C.muted,textAlign:"center",marginTop:6}}>Or complete a full exam below if conditions changed</div>
+      </div>}
+      {areaName&&<>
+        <div style={{fontSize:11,color:C.muted,marginBottom:8,fontFamily:F,fontWeight:700,letterSpacing:".08em",textTransform:"uppercase"}}>Conditions Check *</div>
+        {checkItems.map(item=>{
+          const v=checks[item.key];
+          return <div key={item.key} style={{background:C.card,border:`1px solid ${v===false?C.danger+"55":v===true?C.success+"55":C.border}`,borderRadius:10,padding:"12px 14px",marginBottom:8}}>
+            <div style={{fontFamily:F,fontWeight:700,fontSize:14,color:C.text,marginBottom:2}}>{item.label}</div>
+            <div style={{fontSize:11,color:C.muted,marginBottom:8}}>{item.sub}</div>
+            <div style={{display:"flex",gap:6}}>
+              <button onClick={()=>setChecks(p=>({...p,[item.key]:true}))} style={{flex:1,background:v===true?C.success:"transparent",color:v===true?"#000":C.success,border:`1.5px solid ${C.success}`,borderRadius:8,padding:"7px",fontFamily:F,fontWeight:700,fontSize:12,cursor:"pointer"}}>OK</button>
+              <button onClick={()=>setChecks(p=>({...p,[item.key]:false}))} style={{flex:1,background:v===false?C.danger:"transparent",color:v===false?"#000":C.danger,border:`1.5px solid ${C.danger}`,borderRadius:8,padding:"7px",fontFamily:F,fontWeight:700,fontSize:12,cursor:"pointer"}}>Adverse</button>
+            </div>
+          </div>;
+        })}
+        <div style={{fontSize:11,color:C.muted,marginTop:14,marginBottom:5,fontFamily:F,fontWeight:700,letterSpacing:".08em",textTransform:"uppercase"}}>Do you know the task you're about to perform? *</div>
+        <YesNo value={taskKnown} onChange={setTaskKnown}/>
+        <div style={{fontSize:11,color:C.muted,marginBottom:5,fontFamily:F,fontWeight:700,letterSpacing:".08em",textTransform:"uppercase"}}>Is the area safe to perform the task? *</div>
+        <YesNo value={areaSafe} onChange={setAreaSafe} danger/>
+        <div style={{fontSize:11,color:C.muted,marginBottom:5,fontFamily:F,fontWeight:700,letterSpacing:".08em",textTransform:"uppercase"}}>Overall Findings</div>
+        <div style={{display:"flex",gap:8,marginBottom:14}}>
+          <button onClick={()=>setFindings("none")} style={{flex:1,background:findings==="none"?C.success:"transparent",color:findings==="none"?"#000":C.success,border:`2px solid ${C.success}`,borderRadius:10,padding:"10px",fontFamily:F,fontWeight:900,fontSize:13,cursor:"pointer"}}>No issues</button>
+          <button onClick={()=>setFindings("adverse")} style={{flex:1,background:findings==="adverse"?C.danger:"transparent",color:findings==="adverse"?"#000":C.danger,border:`2px solid ${C.danger}`,borderRadius:10,padding:"10px",fontFamily:F,fontWeight:900,fontSize:13,cursor:"pointer"}}>Adverse condition found</button>
+        </div>
+        {findings==="adverse"&&<>
+          <div style={{fontSize:11,color:C.muted,marginBottom:5}}>Describe the adverse condition *</div>
+          <textarea value={findingsDetail} onChange={e=>setFindingsDetail(e.target.value)} placeholder="What's wrong? Be specific about location and hazard." rows={2} style={{...inp,marginBottom:10,resize:"vertical",fontFamily:"inherit"}}/>
+          <div style={{fontSize:11,color:C.muted,marginBottom:5}}>Corrective action taken *</div>
+          <textarea value={corrective} onChange={e=>setCorrective(e.target.value)} placeholder="What did you do about it? (Barricaded · reported · removed · etc.)" rows={2} style={{...inp,marginBottom:10,resize:"vertical",fontFamily:"inherit"}}/>
+          <div style={{fontSize:11,color:C.muted,marginBottom:5}}>Reported to (optional)</div>
+          <input value={reportedTo} onChange={e=>setReportedTo(e.target.value)} placeholder="Supervisor or competent person name" style={{...inp,marginBottom:14}}/>
+        </>}
+        {err&&<div style={{background:`${C.danger}15`,border:`1px solid ${C.danger}33`,borderRadius:9,padding:"10px 13px",marginBottom:10,color:C.danger,fontSize:13,fontFamily:F,fontWeight:700}}>⚠ {err}</div>}
+        <button onClick={submit} disabled={!valid||saving} style={{width:"100%",background:valid?(areaSafe===false?C.danger:C.success):C.border,color:valid?"#000":C.muted,border:"none",borderRadius:12,padding:"15px",fontFamily:F,fontWeight:900,fontSize:16,cursor:valid?"pointer":"default"}}>
+          {saving?"Saving…":valid?(areaSafe===false?"⛔ Submit — DO NOT WORK":"✓ Submit Exam"):"Complete all required items"}
+        </button>
       </>}
     </div>
   </div>;
@@ -3145,7 +3378,7 @@ function MineOpsApp() {
     if(flow==="addMachine")return <AddMachineScreen allMachines={allMachines} onAdd={handleAddMachine} onBack={()=>setFlow("app")}/>
     if(flow==="photoManager")return <PhotoManagerScreen/>
     if(flow==="inspHistory")return <PreshiftHistoryScreen mineId={activeMine?.id} onBack={()=>setFlow("app")}/>
-    if(flow==="settings")return <SettingsScreen onClose={()=>setFlow("app")} onNavPlants={()=>setFlow("plants")}/>
+    if(flow==="settings")return <SettingsScreen onClose={()=>setFlow("app")} onNavPlants={()=>setFlow("plants")} onNavWorkplaceAreas={()=>setFlow("workplaceAreas")}/>
     if(flow==="reportIssue")return <CreateTicketScreen activeMine={activeMine} activeShiftId={activeShiftId} user={user} allMachines={allMachines} defaultMachineId={user?.machine} onDone={()=>setFlow("tickets")} onBack={()=>setFlow("app")}/>
     if(flow==="tickets")return <HandoverTicketsScreen activeMine={activeMine} user={user} allMachines={allMachines} onCreate={()=>setFlow("reportIssue")} onSelect={t=>{window.__currentTicketId=t.id;setFlow("ticketDetail");}} onBack={()=>setFlow("app")}/>
     if(flow==="ticketDetail")return <TicketDetailScreen ticketId={window.__currentTicketId} activeMine={activeMine} user={user} allMachines={allMachines} onBack={()=>setFlow("tickets")}/>
@@ -3160,7 +3393,7 @@ function MineOpsApp() {
   }
   return <div style={{maxWidth:420,margin:"0 auto",height:"100vh",display:"flex",flexDirection:"column",background:C.bg,position:"relative",overflow:"hidden"}}>
     {showSignOut&&<SignOutConfirm onConfirm={handleSignOut} onCancel={()=>setShowSignOut(false)}/>}
-    {menuOpen&&<MenuOverlay user={user} allMachines={allMachines} activeMine={activeMine} onNav={t=>{if(t==="settings"||t==="tickets"||t==="reportIssue"||t==="ticketDetail"){setFlow(t);}else{setTab(t);setFlow("app");}}} onAddMachine={()=>setFlow("addMachine")} onVehicleCheck={()=>setFlow("vehicleCheck")} onInspHistory={()=>{setFlow("inspHistory");setMenuOpen(false)}} onClose={()=>setMenuOpen(false)}/>}
+    {menuOpen&&<MenuOverlay user={user} allMachines={allMachines} activeMine={activeMine} onNav={t=>{if(t==="settings"||t==="tickets"||t==="reportIssue"||t==="ticketDetail"||t==="workplaceExam"||t==="workplaceAreas"){setFlow(t);}else{setTab(t);setFlow("app");}}} onAddMachine={()=>setFlow("addMachine")} onVehicleCheck={()=>setFlow("vehicleCheck")} onInspHistory={()=>{setFlow("inspHistory");setMenuOpen(false)}} onClose={()=>setMenuOpen(false)}/>}
     {user&&!["onboarding","createMine","joinMine","subscription","vlSetup","login","app","vehicleCheck","addMachine","photoManager","settings","plants","inspHistory"].includes(flow)&&
       <div style={{flexShrink:0,background:`${C.surface}f2`,backdropFilter:"blur(10px)",borderBottom:`1px solid ${C.border}`,padding:"9px 15px",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
         <div style={{display:"flex",alignItems:"center",gap:10}}>
@@ -3181,8 +3414,10 @@ function MineOpsApp() {
     {flow==="addMachine"&&<div style={{flex:1,overflowY:"auto"}}><AddMachineScreen allMachines={allMachines} onAdd={handleAddMachine} onBack={()=>setFlow("app")}/></div>}
     {flow==="photoManager"&&<div style={{flex:1,overflowY:"auto"}}><PhotoManagerScreen/></div>}
     {flow==="inspHistory"&&<div style={{flex:1,overflowY:"auto"}}><PreshiftHistoryScreen mineId={activeMine?.id} onBack={()=>setFlow("app")}/></div>}
-    {flow==="settings"&&<div style={{flex:1,overflowY:"auto"}}><SettingsScreen onClose={()=>setFlow("app")} onNavPlants={()=>setFlow("plants")}/></div>}
+    {flow==="settings"&&<div style={{flex:1,overflowY:"auto"}}><SettingsScreen onClose={()=>setFlow("app")} onNavPlants={()=>setFlow("plants")} onNavWorkplaceAreas={()=>setFlow("workplaceAreas")}/></div>}
     {flow==="plants"&&<div style={{flex:1,overflowY:"auto"}}><PlantsAdminScreen activeMine={activeMine} onBack={()=>setFlow("settings")}/></div>}
+    {flow==="workplaceExam"&&<div style={{flex:1,overflowY:"auto"}}><WorkplaceExamScreen activeMine={activeMine} activeShiftId={activeShiftId} user={user} onComplete={()=>setFlow("app")} onBack={()=>setFlow("app")}/></div>}
+    {flow==="workplaceAreas"&&<div style={{flex:1,overflowY:"auto"}}><WorkplaceAreasAdminScreen activeMine={activeMine} onBack={()=>setFlow("settings")}/></div>}
     {flow==="reportIssue"&&<div style={{flex:1,overflowY:"auto"}}><CreateTicketScreen activeMine={activeMine} activeShiftId={activeShiftId} user={user} allMachines={allMachines} defaultMachineId={user?.machine} onDone={()=>setFlow("tickets")} onBack={()=>setFlow("app")}/></div>}
     {flow==="tickets"&&<div style={{flex:1,overflowY:"auto"}}><HandoverTicketsScreen activeMine={activeMine} user={user} allMachines={allMachines} onCreate={()=>setFlow("reportIssue")} onSelect={t=>{window.__currentTicketId=t.id;setFlow("ticketDetail");}} onBack={()=>setFlow("app")}/></div>}
     {flow==="ticketDetail"&&<div style={{flex:1,overflowY:"auto"}}><TicketDetailScreen ticketId={window.__currentTicketId} activeMine={activeMine} user={user} allMachines={allMachines} onBack={()=>setFlow("tickets")}/></div>}
