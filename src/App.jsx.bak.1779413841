@@ -1562,9 +1562,6 @@ function MenuOverlay({user,onNav,onAddMachine,onVehicleCheck,onClose,allMachines
           <Item icon="👷" label="Machine Performance" sub={`${allMachines.length} machines · ranked by t/hr`} onClick={()=>{onNav("perf");onClose();}}/>
           <Item icon="📊" label="Shift Scoring" sub="Score = t/hr ÷ crusher cap × 1000" onClick={()=>{onNav("scoring");onClose();}}/>
         </Section>
-        <Section title="Admin">
-          {(user?.role==="admin"||user?.role==="minemanager")&&<Item icon="⚙" label="Settings" sub="Plants · mine setup" onClick={()=>{onNav("settings");onClose();}}/>}
-        </Section>
         <Section title="Fleet">
           <Item icon="🚛" label="Add Machine" sub="Add new equipment to the fleet" color={C.purple} onClick={()=>{onAddMachine();onClose();}}/>
           <Item icon="🔍" label="All Machines" sub={`${allMachines.length} in fleet · tap to view diagnostics`} onClick={()=>{onNav("checks");onClose();}}/>
@@ -1578,140 +1575,6 @@ function MenuOverlay({user,onNav,onAddMachine,onVehicleCheck,onClose,allMachines
   </div>;
 }
 
-// ── Plants Admin Screen ───────────────────────────────────────────────────
-function PlantsAdminScreen({activeMine,onBack}){
-  const[plants,setPlants]=useState([]);
-  const[loading,setLoading]=useState(true);
-  const[showCreate,setShowCreate]=useState(false);
-  const[newName,setNewName]=useState("");const[newDesc,setNewDesc]=useState("");
-  const[saving,setSaving]=useState(false);const[err,setErr]=useState("");
-  const load=async()=>{
-    if(!activeMine?.id){setLoading(false);return;}
-    setLoading(true);
-    const{data,error}=await supabase.from("plants").select("*").eq("mine_id",activeMine.id).order("created_at",{ascending:true});
-    if(!error)setPlants(data||[]);
-    setLoading(false);
-  };
-  useEffect(()=>{load();},[activeMine?.id]);
-  const create=async()=>{
-    if(!newName.trim()||!activeMine?.id)return;
-    setSaving(true);setErr("");
-    try{
-      const{error}=await supabase.from("plants").insert({mine_id:activeMine.id,name:newName.trim(),description:newDesc.trim()||null});
-      if(error)throw error;
-      setNewName("");setNewDesc("");setShowCreate(false);await load();
-    }catch(e){setErr(e.message||"Could not create plant");}finally{setSaving(false);}
-  };
-  const archive=async(id)=>{
-    if(!confirm("Archive this plant? Equipment assignments stay but the plant will be hidden from operators."))return;
-    await supabase.from("plants").update({is_active:false}).eq("id",id);
-    await load();
-  };
-  const inp={background:C.surface,color:C.text,border:`1px solid ${C.border}`,borderRadius:9,padding:"11px 14px",fontSize:14,width:"100%",outline:"none"};
-  return <div style={{paddingBottom:80}}>
-    <PageHdr title="Plants" sub="Processing lines · crusher + screens + conveyors" back onBack={onBack}/>
-    <div style={{padding:"14px 16px"}}>
-      {loading?<div style={{textAlign:"center",padding:40,color:C.muted}}>Loading…</div>:plants.length===0&&!showCreate?
-        <div style={{background:`${C.accent}08`,border:`1px solid ${C.accent}22`,borderRadius:14,padding:"22px 16px",textAlign:"center",marginBottom:14}}>
-          <div style={{fontSize:42,marginBottom:8}}>🏭</div>
-          <div style={{fontFamily:F,fontWeight:900,fontSize:18,color:C.accent,marginBottom:4}}>No plants yet</div>
-          <div style={{fontSize:12,color:C.muted,lineHeight:1.5,marginBottom:14}}>Plants group your processing equipment so operators know which line they're feeding.</div>
-        </div>:null}
-      {plants.map(p=>(
-        <div key={p.id} style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:12,padding:"13px 14px",marginBottom:8,opacity:p.is_active?1:0.5}}>
-          <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
-            <div style={{flex:1}}>
-              <div style={{fontFamily:F,fontWeight:900,fontSize:16,color:C.text}}>{p.name}{!p.is_active&&<span style={{fontSize:10,color:C.muted,marginLeft:8}}>· archived</span>}</div>
-              {p.description&&<div style={{fontSize:12,color:C.muted,marginTop:3}}>{p.description}</div>}
-            </div>
-            {p.is_active&&<button onClick={()=>archive(p.id)} style={{background:"none",border:`1px solid ${C.border}`,borderRadius:7,padding:"5px 10px",color:C.muted,fontSize:11,fontFamily:F,fontWeight:700,cursor:"pointer"}}>Archive</button>}
-          </div>
-        </div>
-      ))}
-      {showCreate?
-        <div style={{background:C.card,border:`1px solid ${C.accent}44`,borderRadius:12,padding:"14px",marginTop:10}}>
-          <div style={{fontFamily:F,fontWeight:900,fontSize:13,color:C.accent,marginBottom:10}}>New plant</div>
-          <div style={{fontSize:11,color:C.muted,marginBottom:5}}>Name *</div>
-          <input value={newName} onChange={e=>setNewName(e.target.value)} placeholder="e.g. Plant 1 — Primary Crushing" style={{...inp,marginBottom:10}}/>
-          <div style={{fontSize:11,color:C.muted,marginBottom:5}}>Description (optional)</div>
-          <input value={newDesc} onChange={e=>setNewDesc(e.target.value)} placeholder="e.g. C1 + 2 screens + main conveyor" style={{...inp,marginBottom:10}}/>
-          {err&&<div style={{fontSize:12,color:C.danger,marginBottom:8}}>⚠ {err}</div>}
-          <div style={{display:"flex",gap:8}}>
-            <button onClick={()=>{setShowCreate(false);setNewName("");setNewDesc("");setErr("");}} style={{flex:1,background:"none",border:`1px solid ${C.border}`,borderRadius:9,padding:"11px",color:C.muted,fontFamily:F,fontWeight:700,fontSize:13,cursor:"pointer"}}>Cancel</button>
-            <button onClick={create} disabled={!newName.trim()||saving} style={{flex:1,background:newName.trim()?C.success:C.border,color:newName.trim()?"#000":C.muted,border:"none",borderRadius:9,padding:"11px",fontFamily:F,fontWeight:900,fontSize:13,cursor:newName.trim()?"pointer":"default"}}>{saving?"Saving…":"Create"}</button>
-          </div>
-        </div>:
-        <button onClick={()=>setShowCreate(true)} style={{width:"100%",background:`linear-gradient(135deg,${C.accent},#d4881e)`,color:"#000",border:"none",borderRadius:12,padding:"15px",fontFamily:F,fontWeight:900,fontSize:16,cursor:"pointer",marginTop:10}}>+ Add Plant</button>
-      }
-    </div>
-  </div>;
-}
-// ── Plant Picker (smart default, tap to change) ───────────────────────────
-function PlantPicker({activeMine,user,value,onChange}){
-  const[plants,setPlants]=useState([]);
-  const[loading,setLoading]=useState(true);
-  const[showList,setShowList]=useState(false);
-  useEffect(()=>{
-    if(!activeMine?.id){setLoading(false);return;}
-    (async()=>{
-      const{data}=await supabase.from("plants").select("*").eq("mine_id",activeMine.id).eq("is_active",true).order("name");
-      const list=data||[];
-      setPlants(list);
-      if(!value&&user?.id&&list.length){
-        const{data:lastShift}=await supabase.from("shifts")
-          .select("plant_id")
-          .eq("operator_id",user.id)
-          .not("plant_id","is",null)
-          .order("shift_start",{ascending:false})
-          .limit(1)
-          .maybeSingle();
-        if(lastShift?.plant_id&&list.find(p=>p.id===lastShift.plant_id))onChange(lastShift.plant_id);
-        else if(list.length===1)onChange(list[0].id);
-      }
-      setLoading(false);
-    })();
-  },[activeMine?.id,user?.id]);
-  if(loading)return null;
-  if(plants.length===0)return null;
-  const current=plants.find(p=>p.id===value);
-  return <div style={{background:C.card,border:`1px solid ${current?C.accent+"55":C.border}`,borderRadius:12,padding:"12px 14px",marginBottom:10}}>
-    <div style={{fontSize:10,color:C.muted,fontFamily:F,fontWeight:700,letterSpacing:".1em",textTransform:"uppercase",marginBottom:6}}>Plant / Processing Line</div>
-    {showList?
-      <div>
-        {plants.map(p=>(
-          <button key={p.id} onClick={()=>{onChange(p.id);setShowList(false);}} style={{width:"100%",background:p.id===value?`${C.accent}18`:"transparent",border:`1px solid ${p.id===value?C.accent:C.border}`,borderRadius:9,padding:"10px 12px",marginBottom:6,color:p.id===value?C.accent:C.text,fontFamily:F,fontWeight:700,fontSize:14,cursor:"pointer",textAlign:"left"}}>
-            {p.name}{p.description&&<div style={{fontSize:11,color:C.muted,fontWeight:400,marginTop:2}}>{p.description}</div>}
-          </button>
-        ))}
-        <button onClick={()=>setShowList(false)} style={{width:"100%",background:"none",border:"none",color:C.muted,padding:6,fontFamily:F,fontWeight:700,fontSize:12,cursor:"pointer"}}>Cancel</button>
-      </div>
-      :
-      <div onClick={()=>setShowList(true)} style={{display:"flex",justifyContent:"space-between",alignItems:"center",cursor:"pointer"}}>
-        <div style={{flex:1}}>
-          <div style={{fontFamily:F,fontWeight:900,fontSize:15,color:current?C.text:C.muted}}>{current?current.name:"Select plant"}</div>
-          {current?.description&&<div style={{fontSize:11,color:C.muted,marginTop:2}}>{current.description}</div>}
-        </div>
-        <div style={{color:C.accent,fontSize:12,fontFamily:F,fontWeight:700}}>{current?"Change":"Pick"} ›</div>
-      </div>
-    }
-  </div>;
-}
-// ── Settings Hub ──────────────────────────────────────────────────────────
-function SettingsScreen({onClose,onNavPlants}){
-  return <div style={{paddingBottom:60}}>
-    <PageHdr title="Settings" sub="Mine setup · admin only" back onBack={onClose}/>
-    <div style={{padding:"14px 16px"}}>
-      <div onClick={onNavPlants} style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:12,padding:"15px 16px",marginBottom:10,cursor:"pointer",display:"flex",alignItems:"center",gap:14}}>
-        <span style={{fontSize:24,width:32,textAlign:"center"}}>🏭</span>
-        <div style={{flex:1}}>
-          <div style={{fontFamily:F,fontWeight:700,fontSize:15,color:C.text}}>Plants</div>
-          <div style={{fontSize:11,color:C.muted,marginTop:2}}>Processing lines · crusher + screens + conveyors</div>
-        </div>
-        <span style={{color:C.muted,fontSize:14}}>›</span>
-      </div>
-    </div>
-  </div>;
-}
 // ── Nav ────────────────────────────────────────────────────────────────────
 // ── Intelligence Hub data ─────────────────────────────────────────────────
 // Weather, forecast, fatigue, fuel efficiency, predictive maintenance,
@@ -2851,8 +2714,7 @@ function MineOpsApp() {
     if(flow==="addMachine")return <AddMachineScreen allMachines={allMachines} onAdd={handleAddMachine} onBack={()=>setFlow("app")}/>
     if(flow==="photoManager")return <PhotoManagerScreen/>
     if(flow==="inspHistory")return <PreshiftHistoryScreen mineId={activeMine?.id} onBack={()=>setFlow("app")}/>
-    if(flow==="settings")return <SettingsScreen onClose={()=>setFlow("app")} onNavPlants={()=>setFlow("plants")}/>
-    if(flow==="plants")return <PlantsAdminScreen activeMine={activeMine} onBack={()=>setFlow("settings")}/>
+    if(flow==="settings")return <SettingsScreen onClose={()=>setFlow("app")}/>
     if(tab==="ops"&&lv===1)return <ScoopLoggerScreen user={user} activeMine={activeMine} activeShiftId={activeShiftId} machineId={user?.machine_id}/>
     if(tab==="checks")return <ChecksHub allMachines={allMachines} catDemo={catDemo} activeMine={activeMine} activeShiftId={activeShiftId} user={user}/>
     if(tab==="perf")return <MachinePerformanceScreen allMachines={allMachines} custPerfData={custPerfData}/>
@@ -2863,8 +2725,8 @@ function MineOpsApp() {
   }
   return <div style={{maxWidth:420,margin:"0 auto",height:"100vh",display:"flex",flexDirection:"column",background:C.bg,position:"relative",overflow:"hidden"}}>
     {showSignOut&&<SignOutConfirm onConfirm={handleSignOut} onCancel={()=>setShowSignOut(false)}/>}
-    {menuOpen&&<MenuOverlay user={user} allMachines={allMachines} activeMine={activeMine} onNav={t=>{if(t==="settings"){setFlow("settings");}else{setTab(t);setFlow("app");}}} onAddMachine={()=>setFlow("addMachine")} onVehicleCheck={()=>setFlow("vehicleCheck")} onInspHistory={()=>{setFlow("inspHistory");setMenuOpen(false)}} onClose={()=>setMenuOpen(false)}/>}
-    {user&&!["onboarding","createMine","joinMine","subscription","vlSetup","login","app","vehicleCheck","addMachine","photoManager","settings","plants","inspHistory"].includes(flow)&&
+    {menuOpen&&<MenuOverlay user={user} allMachines={allMachines} activeMine={activeMine} onNav={t=>{setTab(t);setFlow("app")}} onAddMachine={()=>setFlow("addMachine")} onVehicleCheck={()=>setFlow("vehicleCheck")} onInspHistory={()=>{setFlow("inspHistory");setMenuOpen(false)}} onClose={()=>setMenuOpen(false)}/>}
+    {user&&!["onboarding","createMine","joinMine","subscription","vlSetup","login","app","vehicleCheck","addMachine","photoManager","settings","inspHistory"].includes(flow)&&
       <div style={{flexShrink:0,background:`${C.surface}f2`,backdropFilter:"blur(10px)",borderBottom:`1px solid ${C.border}`,padding:"9px 15px",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
         <div style={{display:"flex",alignItems:"center",gap:10}}>
           <button onClick={()=>setMenuOpen(true)} style={{background:"none",border:`1px solid ${C.border}`,borderRadius:8,padding:"5px 10px",color:C.muted,fontSize:16,cursor:"pointer",lineHeight:1}}>☰</button>
