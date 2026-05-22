@@ -2108,6 +2108,7 @@ function MenuOverlay({user,onNav,onAddMachine,onVehicleCheck,onClose,allMachines
           <Item icon="🗺" label="Site Area Check" sub="Mine Code minimum" color={C.info} onClick={()=>{onNav("checks");onClose();}}/>
           <Item icon="🔧" label="Maintenance" sub="Grease · filter blow · VisionLink fluids" color={C.accent} onClick={()=>{onNav("checks");onClose();}}/>
           <Item icon="⚙" label="Diagnostics" sub="Fault codes · fluids · service" color={C.amber} onClick={()=>{onNav("checks");onClose();}}/>
+          <Item icon="🧯" label="Fire Extinguishers" sub="MSHA monthly inspection · per location" color="#ec4899" onClick={()=>{onNav("fireInspect");onClose();}}/>
           <Item icon="🚗" label="Vehicle Check" sub="Company truck / ute inspection" color={C.accent} onClick={()=>{onVehicleCheck();onClose();}}/>
         </Section>
         <Section title="Performance">
@@ -2252,18 +2253,21 @@ function PlantPicker({activeMine,user,value,onChange}){
   </div>;
 }
 // ── Settings Hub ──────────────────────────────────────────────────────────
-function SettingsScreen({onClose,onNavPlants,onNavWorkplaceAreas}){
+function SettingsScreen({onClose,onNavPlants,onNavWorkplaceAreas,onNavExtinguisherLocations}){
+  const Row=({icon,title,sub,onClick})=><div onClick={onClick} style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:12,padding:"15px 16px",marginBottom:10,cursor:"pointer",display:"flex",alignItems:"center",gap:14}}>
+    <span style={{fontSize:24,width:32,textAlign:"center"}}>{icon}</span>
+    <div style={{flex:1}}>
+      <div style={{fontFamily:F,fontWeight:700,fontSize:15,color:C.text}}>{title}</div>
+      <div style={{fontSize:11,color:C.muted,marginTop:2}}>{sub}</div>
+    </div>
+    <span style={{color:C.muted,fontSize:14}}>›</span>
+  </div>;
   return <div style={{paddingBottom:60}}>
     <PageHdr title="Settings" sub="Mine setup · admin only" back onBack={onClose}/>
     <div style={{padding:"14px 16px"}}>
-      <div onClick={onNavPlants} style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:12,padding:"15px 16px",marginBottom:10,cursor:"pointer",display:"flex",alignItems:"center",gap:14}}>
-        <span style={{fontSize:24,width:32,textAlign:"center"}}>🏭</span>
-        <div style={{flex:1}}>
-          <div style={{fontFamily:F,fontWeight:700,fontSize:15,color:C.text}}>Plants</div>
-          <div style={{fontSize:11,color:C.muted,marginTop:2}}>Processing lines · crusher + screens + conveyors</div>
-        </div>
-        <span style={{color:C.muted,fontSize:14}}>›</span>
-      </div>
+      <Row icon="🏭" title="Plants"                  sub="Processing lines · crusher + screens + conveyors" onClick={onNavPlants}/>
+      <Row icon="🗺"  title="Workplace Areas"        sub="MSHA exam areas · pit benches · crusher · roads"  onClick={onNavWorkplaceAreas}/>
+      <Row icon="🧯" title="Extinguisher Locations" sub="Places that have extinguishers · for monthly checks" onClick={onNavExtinguisherLocations}/>
     </div>
   </div>;
 }
@@ -3413,9 +3417,543 @@ function ComplianceHub(){
   </div>;
 }
 
+// ── Fire Extinguisher Photo Upload ────────────────────────────────────────
+async function uploadExtinguisherPhoto(file,mineId,scopeId){
+  if(!file||!mineId)return null;
+  const ext=(file.name||"photo.jpg").split(".").pop().toLowerCase();
+  const path=`${mineId}/${scopeId||"tmp"}/${Date.now()}.${ext}`;
+  const{error}=await supabase.storage.from("fire-extinguishers").upload(path,file,{contentType:file.type||"image/jpeg",upsert:false});
+  if(error){console.error("ext photo upload:",error);return null;}
+  return path;
+}
+async function getExtinguisherPhotoUrl(path){
+  if(!path)return null;
+  const{data}=await supabase.storage.from("fire-extinguishers").createSignedUrl(path,3600);
+  return data?.signedUrl||null;
+}
+
+// ── Records Hub ───────────────────────────────────────────────────────────
+// Mine-wide read-only archive across 6 record types. Filter chips, date
+// range, operator search. Tap a row to expand its full detail in-place.
+
+const RECORD_TYPES=[
+  {id:"all",         label:"All",         icon:"📋",color:C.muted},
+  {id:"prestart",    label:"Pre-Start",   icon:"✅",color:C.success},
+  {id:"workplace",   label:"Workplace",   icon:"🗺",color:C.info},
+  {id:"maintenance", label:"Maintenance", icon:"🔧",color:C.accent},
+  {id:"downtime",    label:"Downtime",    icon:"⏸️",color:C.amber},
+  {id:"handover",    label:"Handover",    icon:"🎟",color:C.danger},
+  {id:"fire",        label:"Fire Ext",    icon:"🧯",color:"#ec4899"},
+];
+
+function _humanDate(ymd){
+  const t=_today();
+  const y=_ymd(_addDays(new Date(),-1));
+  if(ymd===t)return"Today";
+  if(ymd===y)return"Yesterday";
+  return new Date(ymd+"T00:00").toLocaleDateString("en-US",{weekday:"short",month:"short",day:"numeric",year:"numeric"});
+}
+function _fmtTime(iso){
+  if(!iso)return"";
+  const d=new Date(iso);
+  return`${String(d.getHours()).padStart(2,"0")}:${String(d.getMinutes()).padStart(2,"0")}`;
+}
+
+function RecordsHub({activeMine,allMachines,remoteOperators,onBack}){
+  const[records,setRecords]=useState([]);
+  const[loading,setLoading]=useState(true);
+  const[filter,setFilter]=useState("all");
+  const[from,setFrom]=useState("");
+  const[to,setTo]=useState("");
+  const[opSearch,setOpSearch]=useState("");
+  const[expanded,setExpanded]=useState(null);
+
+  useEffect(()=>{
+    if(!activeMine?.id){setLoading(false);setRecords([]);return;}
+    let cancelled=false;
+    (async()=>{
+      setLoading(true);
+      try{
+        const fromIso=from?`${from}T00:00:00`:null;
+        const toIso=to?`${to}T23:59:59`:null;
+        const opMap=new Map((remoteOperators||[]).map(o=>[o.id,o.name]));
+        const machineMap={};(allMachines||[]).forEach(m=>{machineMap[m.id]=m.model||m.id;});
+        const limit=200;
+        const r=async(table,tsCol,fn)=>{
+          let q=supabase.from(table).select("*").eq("mine_id",activeMine.id).order(tsCol,{ascending:false}).limit(limit);
+          if(fromIso)q=q.gte(tsCol,fromIso);
+          if(toIso)q=q.lte(tsCol,toIso);
+          const{data,error}=await q;
+          if(error){console.warn(`records ${table}:`,error.message);return[];}
+          return(data||[]).map(fn).filter(Boolean);
+        };
+        const[prestarts,exams,maints,downs,handovers,fires]=await Promise.all([
+          r("prestart_logs","signed_off_at",row=>({
+            id:`p_${row.id}`,type:"prestart",ts:new Date(row.signed_off_at).getTime(),iso:row.signed_off_at,
+            title:`Pre-start · ${machineMap[row.machine_id]||row.machine_id||"machine"}`,
+            subtitle:`Fuel ${row.fuel_level??"—"}%`,
+            operatorName:opMap.get(row.operator_id)||"—",
+            machineId:row.machine_id,raw:row,
+          })),
+          r("workplace_exams","created_at",row=>({
+            id:`w_${row.id}`,type:"workplace",ts:new Date(row.created_at||row.examined_at||Date.now()).getTime(),iso:row.created_at||row.examined_at,
+            title:`Workplace exam · ${row.area||"—"}`,
+            subtitle:row.acknowledged_exam_id?"Acknowledged":(row.findings&&row.findings!=="none"?"Findings recorded":"No findings"),
+            operatorName:row.operator_name||opMap.get(row.operator_id)||"—",
+            raw:row,
+          })),
+          r("maintenance_logs","logged_at",row=>({
+            id:`m_${row.id}`,type:"maintenance",ts:new Date(row.logged_at).getTime(),iso:row.logged_at,
+            title:`Maintenance · ${row.task_id||"task"} on ${machineMap[row.machine_id]||row.machine_id||"machine"}`,
+            subtitle:row.supervisor_approved_by?`Supervisor: ${row.supervisor_approved_by}`:(row.notes||""),
+            operatorName:row.technician_name||"—",
+            machineId:row.machine_id,raw:row,
+          })),
+          r("downtime_logs","logged_at",row=>{
+            const cat=DT_CATS[row.category]||{label:row.category,icon:"❓"};
+            return{
+              id:`d_${row.id}`,type:"downtime",ts:new Date(row.logged_at).getTime(),iso:row.logged_at,
+              title:`Downtime · ${cat.label} · ${machineMap[row.machine_id]||row.machine_id||"machine"}`,
+              subtitle:`${row.duration_min||0} min${row.flagged_for_supervisor?" · flagged":""}${row.note?` · "${row.note}"`:""}`,
+              operatorName:"—",
+              machineId:row.machine_id,raw:row,
+            };
+          }),
+          r("handover_tickets","created_at",row=>({
+            id:`h_${row.id}`,type:"handover",ts:new Date(row.created_at).getTime(),iso:row.created_at,
+            title:`Handover · ${machineMap[row.machine_id]||row.machine_id||"machine"} · sev ${row.severity}`,
+            subtitle:`${row.status||"open"} · ${(row.description||"").slice(0,80)}`,
+            operatorName:row.created_by_name||"—",
+            machineId:row.machine_id,raw:row,
+          })),
+          r("fire_extinguisher_inspections","inspected_at",row=>({
+            id:`f_${row.id}`,type:"fire",ts:new Date(row.inspected_at).getTime(),iso:row.inspected_at,
+            title:`Fire ext · ${row.status==="pass"?"PASS":"FAIL"}`,
+            subtitle:row.notes?row.notes.slice(0,80):(row.status==="pass"?"Inspection passed":"Inspection failed"),
+            operatorName:row.inspector_name||"—",
+            raw:row,
+          })),
+        ]);
+        const all=[...prestarts,...exams,...maints,...downs,...handovers,...fires].sort((a,b)=>b.ts-a.ts);
+        if(!cancelled)setRecords(all);
+      }catch(e){console.error("records hub:",e);}
+      finally{if(!cancelled)setLoading(false);}
+    })();
+    return()=>{cancelled=true;};
+  },[activeMine?.id,from,to,(remoteOperators||[]).length,(allMachines||[]).length]);
+
+  const filtered=records.filter(r=>{
+    if(filter!=="all"&&r.type!==filter)return false;
+    if(opSearch.trim()){
+      const q=opSearch.toLowerCase();
+      if(!(r.operatorName||"").toLowerCase().includes(q))return false;
+    }
+    return true;
+  });
+
+  // Group by local day
+  const groups=[];
+  let curKey=null,curBucket=null;
+  for(const rec of filtered){
+    const k=_ymd(new Date(rec.ts));
+    if(k!==curKey){curKey=k;curBucket={key:k,label:_humanDate(k),items:[]};groups.push(curBucket);}
+    curBucket.items.push(rec);
+  }
+
+  const counts=RECORD_TYPES.reduce((acc,t)=>{
+    if(t.id==="all")acc[t.id]=records.length;
+    else acc[t.id]=records.filter(r=>r.type===t.id).length;
+    return acc;
+  },{});
+
+  const inp={background:C.surface,color:C.text,border:`1px solid ${C.border}`,borderRadius:8,padding:"8px 10px",fontSize:13,outline:"none",fontFamily:"inherit"};
+
+  return <div style={{paddingBottom:80}}>
+    <PageHdr title="Records" sub={`Inspection archive · everyone in this mine${activeMine?.name?` · ${activeMine.name}`:""}`} back onBack={onBack}/>
+
+    {/* Filter chips */}
+    <div style={{padding:"10px 12px 6px",borderBottom:`1px solid ${C.border}`,background:`${C.surface}cc`,position:"sticky",top:0,zIndex:10,backdropFilter:"blur(8px)"}}>
+      <div style={{display:"flex",gap:6,overflowX:"auto",paddingBottom:8,marginBottom:8,WebkitOverflowScrolling:"touch"}}>
+        {RECORD_TYPES.map(t=>{
+          const active=filter===t.id;
+          const n=counts[t.id]||0;
+          return<button key={t.id} onClick={()=>setFilter(t.id)}
+            style={{flexShrink:0,background:active?`${t.color}22`:C.card,border:`1px solid ${active?t.color:C.border}`,borderRadius:99,padding:"5px 11px",color:active?t.color:C.textSub,fontSize:11,fontFamily:F,fontWeight:700,cursor:"pointer",whiteSpace:"nowrap",display:"flex",alignItems:"center",gap:6}}>
+            <span>{t.icon}</span>{t.label}<span style={{color:active?t.color:C.muted,opacity:.7,fontSize:10}}>{n}</span>
+          </button>;
+        })}
+      </div>
+      {/* Date range + operator search */}
+      <div style={{display:"flex",gap:6,marginBottom:0}}>
+        <input type="date" value={from} onChange={e=>setFrom(e.target.value)} style={{...inp,flex:1,minWidth:0}} placeholder="From"/>
+        <input type="date" value={to} onChange={e=>setTo(e.target.value)} style={{...inp,flex:1,minWidth:0}} placeholder="To"/>
+        <input value={opSearch} onChange={e=>setOpSearch(e.target.value)} placeholder="Operator name" style={{...inp,flex:1.2,minWidth:0}}/>
+      </div>
+      {(from||to||opSearch||filter!=="all")&&<button onClick={()=>{setFilter("all");setFrom("");setTo("");setOpSearch("");}}
+        style={{background:"none",border:"none",color:C.muted,fontSize:11,fontFamily:F,fontWeight:700,cursor:"pointer",padding:"6px 0 0",letterSpacing:".04em"}}>Clear filters ×</button>}
+    </div>
+
+    <div style={{padding:"10px 14px"}}>
+      {loading&&<div style={{textAlign:"center",padding:40,color:C.muted}}>Loading records…</div>}
+      {!loading&&records.length===0&&<div style={{textAlign:"center",padding:"50px 22px"}}>
+        <div style={{fontSize:46,marginBottom:10,opacity:.6}}>📁</div>
+        <div style={{fontFamily:F,fontWeight:900,fontSize:18,color:C.text,marginBottom:6}}>No records yet</div>
+        <div style={{fontSize:12,color:C.muted,lineHeight:1.6,maxWidth:280,margin:"0 auto"}}>Every signed-off inspection — pre-starts, workplace exams, maintenance, handovers, fire extinguisher checks — appears here once they're logged.</div>
+      </div>}
+      {!loading&&records.length>0&&filtered.length===0&&<div style={{textAlign:"center",padding:"40px 22px",color:C.muted,fontSize:13}}>No records match these filters.</div>}
+      {groups.map(g=><div key={g.key} style={{marginBottom:14}}>
+        <div style={{fontFamily:F,fontWeight:900,fontSize:11,color:C.muted,letterSpacing:".1em",textTransform:"uppercase",padding:"4px 4px 8px"}}>{g.label} · {g.items.length}</div>
+        {g.items.map(rec=>{
+          const meta=RECORD_TYPES.find(t=>t.id===rec.type)||RECORD_TYPES[0];
+          const isOpen=expanded===rec.id;
+          return<div key={rec.id} style={{background:C.card,border:`1px solid ${isOpen?meta.color+"66":C.border}`,borderLeft:`3px solid ${meta.color}`,borderRadius:10,marginBottom:6,overflow:"hidden"}}>
+            <button onClick={()=>setExpanded(isOpen?null:rec.id)}
+              style={{width:"100%",background:"none",border:"none",padding:"10px 12px",display:"flex",alignItems:"center",gap:10,cursor:"pointer",textAlign:"left"}}>
+              <span style={{fontSize:18,flexShrink:0}}>{meta.icon}</span>
+              <div style={{flex:1,minWidth:0}}>
+                <div style={{fontFamily:F,fontWeight:700,fontSize:13,color:C.text,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{rec.title}</div>
+                <div style={{fontSize:11,color:C.muted,marginTop:1,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{rec.operatorName} · {_fmtTime(rec.iso)}{rec.subtitle?` · ${rec.subtitle}`:""}</div>
+              </div>
+              <span style={{color:C.muted,fontSize:14,flexShrink:0,transform:isOpen?"rotate(90deg)":"none",transition:"transform .15s"}}>›</span>
+            </button>
+            {isOpen&&<div style={{borderTop:`1px solid ${C.border}`,padding:"10px 12px",background:`${C.surface}`,fontSize:12,color:C.textSub}}>
+              {Object.entries(rec.raw).filter(([k,v])=>v!=null&&v!==""&&!["id","mine_id"].includes(k)).map(([k,v])=>{
+                const display=typeof v==="object"?JSON.stringify(v,null,2):String(v);
+                return<div key={k} style={{display:"flex",gap:10,padding:"3px 0",borderBottom:`1px solid ${C.border}22`,fontFamily:typeof v==="object"?"monospace":"inherit",fontSize:typeof v==="object"?10:12}}>
+                  <div style={{color:C.muted,minWidth:120,flexShrink:0,fontFamily:F,fontWeight:700,fontSize:10,letterSpacing:".04em",textTransform:"uppercase",paddingTop:2}}>{k}</div>
+                  <div style={{color:C.text,wordBreak:"break-word",whiteSpace:typeof v==="object"?"pre-wrap":"normal"}}>{display}</div>
+                </div>;
+              })}
+            </div>}
+          </div>;
+        })}
+      </div>)}
+    </div>
+  </div>;
+}
+
+// ── Extinguisher Locations Admin ──────────────────────────────────────────
+function ExtinguisherLocationsAdminScreen({activeMine,onBack}){
+  const[locs,setLocs]=useState([]);
+  const[loading,setLoading]=useState(true);
+  const[showCreate,setShowCreate]=useState(false);
+  const[newName,setNewName]=useState("");const[newDesc,setNewDesc]=useState("");
+  const[saving,setSaving]=useState(false);const[err,setErr]=useState("");
+  const load=async()=>{
+    if(!activeMine?.id){setLoading(false);return;}
+    setLoading(true);
+    const{data,error}=await supabase.from("extinguisher_locations").select("*").eq("mine_id",activeMine.id).order("created_at",{ascending:true});
+    if(!error)setLocs(data||[]);
+    setLoading(false);
+  };
+  useEffect(()=>{load();},[activeMine?.id]);
+  const create=async()=>{
+    if(!newName.trim()||!activeMine?.id)return;
+    setSaving(true);setErr("");
+    try{
+      const{error}=await supabase.from("extinguisher_locations").insert({mine_id:activeMine.id,name:newName.trim(),description:newDesc.trim()||null});
+      if(error)throw error;
+      setNewName("");setNewDesc("");setShowCreate(false);await load();
+    }catch(e){setErr(e.message||"Could not create location");}finally{setSaving(false);}
+  };
+  const archive=async(id)=>{
+    if(!confirm("Archive this location? It won't appear in the inspection picker."))return;
+    await supabase.from("extinguisher_locations").update({is_active:false}).eq("id",id);
+    await load();
+  };
+  const inp={background:C.surface,color:C.text,border:`1px solid ${C.border}`,borderRadius:9,padding:"11px 14px",fontSize:14,width:"100%",outline:"none"};
+  return <div style={{paddingBottom:80}}>
+    <PageHdr title="Extinguisher Locations" sub="Crusher building · workshop · office trailer · etc." back onBack={onBack}/>
+    <div style={{padding:"14px 16px"}}>
+      {loading?<div style={{textAlign:"center",padding:40,color:C.muted}}>Loading…</div>:locs.length===0&&!showCreate?
+        <div style={{background:`${C.accent}08`,border:`1px solid ${C.accent}22`,borderRadius:14,padding:"22px 16px",textAlign:"center",marginBottom:14}}>
+          <div style={{fontSize:42,marginBottom:8}}>🧯</div>
+          <div style={{fontFamily:F,fontWeight:900,fontSize:18,color:C.accent,marginBottom:4}}>No locations defined yet</div>
+          <div style={{fontSize:12,color:C.muted,lineHeight:1.5,marginBottom:14}}>Define each place that has extinguishers — operators pick a location, then log each extinguisher they find there. The list of known extinguishers per location builds itself over time.</div>
+        </div>:null}
+      {locs.map(l=>(
+        <div key={l.id} style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:12,padding:"13px 14px",marginBottom:8,opacity:l.is_active?1:0.5}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
+            <div style={{flex:1}}>
+              <div style={{fontFamily:F,fontWeight:900,fontSize:16,color:C.text}}>{l.name}{!l.is_active&&<span style={{fontSize:10,color:C.muted,marginLeft:8}}>· archived</span>}</div>
+              {l.description&&<div style={{fontSize:12,color:C.muted,marginTop:3}}>{l.description}</div>}
+            </div>
+            {l.is_active&&<button onClick={()=>archive(l.id)} style={{background:"none",border:`1px solid ${C.border}`,borderRadius:7,padding:"5px 10px",color:C.muted,fontSize:11,fontFamily:F,fontWeight:700,cursor:"pointer"}}>Archive</button>}
+          </div>
+        </div>
+      ))}
+      {showCreate?
+        <div style={{background:C.card,border:`1px solid ${C.accent}44`,borderRadius:12,padding:"14px",marginTop:10}}>
+          <div style={{fontFamily:F,fontWeight:900,fontSize:13,color:C.accent,marginBottom:10}}>New location</div>
+          <div style={{fontSize:11,color:C.muted,marginBottom:5}}>Name *</div>
+          <input value={newName} onChange={e=>setNewName(e.target.value)} placeholder="e.g. Crusher Building" style={{...inp,marginBottom:10}}/>
+          <div style={{fontSize:11,color:C.muted,marginBottom:5}}>Description (optional)</div>
+          <input value={newDesc} onChange={e=>setNewDesc(e.target.value)} placeholder="e.g. Walk-up steps · 2 ABC + 1 CO2" style={{...inp,marginBottom:10}}/>
+          {err&&<div style={{fontSize:12,color:C.danger,marginBottom:8}}>⚠ {err}</div>}
+          <div style={{display:"flex",gap:8}}>
+            <button onClick={()=>{setShowCreate(false);setNewName("");setNewDesc("");setErr("");}} style={{flex:1,background:"none",border:`1px solid ${C.border}`,borderRadius:9,padding:"11px",color:C.muted,fontFamily:F,fontWeight:700,fontSize:13,cursor:"pointer"}}>Cancel</button>
+            <button onClick={create} disabled={!newName.trim()||saving} style={{flex:1,background:newName.trim()?C.success:C.border,color:newName.trim()?"#000":C.muted,border:"none",borderRadius:9,padding:"11px",fontFamily:F,fontWeight:900,fontSize:13,cursor:newName.trim()?"pointer":"default"}}>{saving?"Saving…":"Create"}</button>
+          </div>
+        </div>:
+        <button onClick={()=>setShowCreate(true)} style={{width:"100%",background:`linear-gradient(135deg,${C.accent},#d4881e)`,color:"#000",border:"none",borderRadius:12,padding:"15px",fontFamily:F,fontWeight:900,fontSize:16,cursor:"pointer",marginTop:10}}>+ Add Location</button>
+      }
+    </div>
+  </div>;
+}
+
+// ── Fire Extinguisher Inspection ──────────────────────────────────────────
+function FireExtinguisherInspectScreen({activeMine,user,onBack}){
+  const[stage,setStage]=useState("locations"); // locations | location | inspect
+  const[locs,setLocs]=useState([]);
+  const[loading,setLoading]=useState(true);
+  const[selLoc,setSelLoc]=useState(null);
+  const[knownExts,setKnownExts]=useState([]);
+  const[doneThisVisit,setDoneThisVisit]=useState(new Set()); // extinguisher_id (or `new:<idx>` for new ones)
+  const[insptByLoc,setInsptByLoc]=useState({}); // location_id → count of inspections this month
+  const[inspectExt,setInspectExt]=useState(null); // extinguisher row OR {isNew:true}
+  const camRef=useRef(null);
+  const[file,setFile]=useState(null);
+  const[status,setStatus]=useState("pass");
+  const[notes,setNotes]=useState("");
+  const[serialText,setSerialText]=useState("");
+  const[saving,setSaving]=useState(false);
+  const[err,setErr]=useState("");
+
+  // Initial load: locations + this-month inspection counts
+  useEffect(()=>{
+    if(!activeMine?.id){setLoading(false);return;}
+    let cancelled=false;
+    (async()=>{
+      setLoading(true);
+      try{
+        const monthStart=new Date();monthStart.setDate(1);monthStart.setHours(0,0,0,0);
+        const[locRes,inspRes]=await Promise.all([
+          supabase.from("extinguisher_locations").select("*").eq("mine_id",activeMine.id).eq("is_active",true).order("name"),
+          supabase.from("fire_extinguisher_inspections").select("location_id,inspected_at").eq("mine_id",activeMine.id).gte("inspected_at",monthStart.toISOString()),
+        ]);
+        if(cancelled)return;
+        if(!locRes.error)setLocs(locRes.data||[]);
+        if(!inspRes.error){
+          const counts={};
+          for(const r of inspRes.data||[]){counts[r.location_id]=(counts[r.location_id]||0)+1;}
+          setInsptByLoc(counts);
+        }
+      }catch(e){console.error("fire load:",e);}
+      finally{if(!cancelled)setLoading(false);}
+    })();
+    return()=>{cancelled=true;};
+  },[activeMine?.id]);
+
+  // When a location is selected, load its known extinguishers
+  const openLocation=async loc=>{
+    setSelLoc(loc);setStage("location");setDoneThisVisit(new Set());
+    try{
+      const{data}=await supabase.from("fire_extinguishers").select("*").eq("location_id",loc.id).eq("is_active",true).order("first_seen_at");
+      setKnownExts(data||[]);
+    }catch(e){console.error("load known exts:",e);setKnownExts([]);}
+  };
+
+  const startInspection=ext=>{
+    setInspectExt(ext);
+    setFile(null);setStatus("pass");setNotes("");
+    setSerialText(ext?.serial_number||"");
+    setErr("");
+    setStage("inspect");
+  };
+
+  const saveInspection=async()=>{
+    if(saving)return;
+    setSaving(true);setErr("");
+    try{
+      let photoPath=null;
+      if(file){
+        photoPath=await uploadExtinguisherPhoto(file,activeMine.id,selLoc.id);
+        if(!photoPath){throw new Error("Photo upload failed");}
+      }
+      // Resolve extinguisher row: either reuse existing or create new
+      let extRow=inspectExt&&!inspectExt.isNew?inspectExt:null;
+      if(!extRow){
+        // New extinguisher: try to dedupe by serial within mine if provided
+        if(serialText.trim()){
+          const{data:existing}=await supabase.from("fire_extinguishers")
+            .select("*").eq("mine_id",activeMine.id).eq("serial_number",serialText.trim()).maybeSingle();
+          if(existing)extRow=existing;
+        }
+        if(!extRow){
+          const{data:created,error:cErr}=await supabase.from("fire_extinguishers").insert({
+            mine_id:activeMine.id,
+            location_id:selLoc.id,
+            serial_number:serialText.trim()||null,
+            serial_photo_path:photoPath,
+            first_seen_at:new Date().toISOString(),
+          }).select().single();
+          if(cErr)throw cErr;
+          extRow=created;
+        }
+      }
+      // Insert inspection row
+      const{data:auth}=await supabase.auth.getUser();
+      const{error:iErr}=await supabase.from("fire_extinguisher_inspections").insert({
+        mine_id:activeMine.id,
+        location_id:selLoc.id,
+        extinguisher_id:extRow?.id||null,
+        inspector_id:auth?.user?.id||null,
+        inspector_name:user?.name||"Operator",
+        serial_photo_path:photoPath,
+        status,
+        notes:notes.trim()||null,
+      });
+      if(iErr)throw iErr;
+      // Update extinguisher's last_inspected_at
+      if(extRow?.id){
+        await supabase.from("fire_extinguishers").update({last_inspected_at:new Date().toISOString()}).eq("id",extRow.id);
+      }
+      // Update local state for visit progress
+      setDoneThisVisit(prev=>{const n=new Set(prev);n.add(extRow?.id||`new:${Date.now()}`);return n;});
+      // Refresh known exts (in case it was new)
+      if(!inspectExt||inspectExt.isNew){
+        const{data}=await supabase.from("fire_extinguishers").select("*").eq("location_id",selLoc.id).eq("is_active",true).order("first_seen_at");
+        setKnownExts(data||[]);
+      }
+      setStage("location");
+    }catch(e){console.error("save inspection:",e);setErr(e.message||"Could not save inspection");}
+    finally{setSaving(false);}
+  };
+
+  const finishLocation=()=>{
+    // Bump local counter so the locations list updates without a re-fetch
+    setInsptByLoc(prev=>({...prev,[selLoc.id]:(prev[selLoc.id]||0)+doneThisVisit.size}));
+    setSelLoc(null);setStage("locations");setKnownExts([]);setDoneThisVisit(new Set());
+  };
+
+  // ── render stages ───────────────────────────────────────────────────
+  if(stage==="inspect"){
+    const isNew=!inspectExt||inspectExt.isNew;
+    const canSave=!!file||!isNew; // require photo when adding new
+    return<div style={{paddingBottom:80}}>
+      <PageHdr title={isNew?"New Extinguisher":"Inspect Extinguisher"} sub={selLoc?.name} back onBack={()=>setStage("location")}/>
+      <div style={{padding:"14px 16px"}}>
+        {/* Photo capture */}
+        <div style={{fontSize:11,color:C.muted,marginBottom:6,fontFamily:F,fontWeight:700,letterSpacing:".06em",textTransform:"uppercase"}}>Serial tag photo {isNew&&<span style={{color:C.danger}}>*</span>}</div>
+        <button onClick={()=>camRef.current?.click()} style={{width:"100%",background:C.card,border:`2px dashed ${file?C.success:C.accent}55`,borderRadius:12,padding:file?10:"22px",color:file?C.success:C.accent,fontFamily:F,fontWeight:700,fontSize:14,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:10,marginBottom:14}}>
+          {file?<>
+            <img src={URL.createObjectURL(file)} style={{width:54,height:54,borderRadius:8,objectFit:"cover",border:`1px solid ${C.border}`}}/>
+            <span>Photo captured · tap to retake</span>
+          </>:<><span style={{fontSize:32}}>📷</span><span>Take photo of serial tag</span></>}
+        </button>
+        <input ref={camRef} type="file" accept="image/*" capture="environment" style={{display:"none"}} onChange={e=>{const f=e.target.files?.[0];if(f)setFile(f);e.target.value="";}}/>
+
+        {/* Serial (optional manual entry — OCR later) */}
+        <div style={{fontSize:11,color:C.muted,marginBottom:6,fontFamily:F,fontWeight:700,letterSpacing:".06em",textTransform:"uppercase"}}>Serial number <span style={{color:C.muted,fontWeight:400}}>· optional, OCR fills later</span></div>
+        <input value={serialText} onChange={e=>setSerialText(e.target.value)} placeholder="e.g. AB-12345"
+          style={{background:C.surface,color:C.text,border:`1px solid ${C.border}`,borderRadius:9,padding:"11px 13px",fontSize:14,width:"100%",outline:"none",boxSizing:"border-box",marginBottom:14,fontFamily:"monospace"}}/>
+
+        {/* Pass / Fail */}
+        <div style={{fontSize:11,color:C.muted,marginBottom:6,fontFamily:F,fontWeight:700,letterSpacing:".06em",textTransform:"uppercase"}}>Status *</div>
+        <div style={{display:"flex",gap:8,marginBottom:14}}>
+          {[["pass","✓ Pass",C.success],["fail","✕ Fail",C.danger]].map(([k,lb,col])=>{
+            const sel=status===k;
+            return<button key={k} onClick={()=>setStatus(k)}
+              style={{flex:1,background:sel?col:`${col}15`,border:`2px solid ${col}`,borderRadius:11,padding:"14px",color:sel?"#000":col,fontFamily:F,fontWeight:900,fontSize:15,cursor:"pointer",letterSpacing:".04em"}}>{lb}</button>;
+          })}
+        </div>
+
+        {/* Notes */}
+        <div style={{fontSize:11,color:C.muted,marginBottom:6,fontFamily:F,fontWeight:700,letterSpacing:".06em",textTransform:"uppercase"}}>Notes <span style={{color:C.muted,fontWeight:400}}>· optional</span></div>
+        <textarea rows={3} value={notes} onChange={e=>setNotes(e.target.value)}
+          placeholder="e.g. gauge in green · seal intact · next service due 2027-01"
+          style={{background:C.surface,color:C.text,border:`1px solid ${C.border}`,borderRadius:9,padding:"10px 13px",fontSize:13,width:"100%",outline:"none",resize:"vertical",boxSizing:"border-box",fontFamily:"inherit",marginBottom:14}}/>
+
+        {err&&<div style={{fontSize:12,color:C.danger,marginBottom:10}}>⚠ {err}</div>}
+
+        <button onClick={saveInspection} disabled={!canSave||saving}
+          style={{width:"100%",background:canSave&&!saving?C.success:C.border,color:canSave&&!saving?"#000":C.muted,border:"none",borderRadius:12,padding:"15px",fontFamily:F,fontWeight:900,fontSize:17,letterSpacing:".04em",cursor:canSave&&!saving?"pointer":"default",marginBottom:6}}>
+          {saving?"Saving…":canSave?"✅ SAVE INSPECTION":(isNew?"Take photo to continue":"Save inspection")}
+        </button>
+        <button onClick={()=>setStage("location")} disabled={saving} style={{width:"100%",background:"transparent",border:"none",color:C.muted,padding:"10px",fontFamily:F,fontWeight:700,fontSize:13,cursor:saving?"default":"pointer"}}>Cancel</button>
+      </div>
+    </div>;
+  }
+
+  if(stage==="location"){
+    const doneN=doneThisVisit.size;
+    const undone=knownExts.filter(e=>!doneThisVisit.has(e.id));
+    return<div style={{paddingBottom:100}}>
+      <PageHdr title={selLoc?.name} sub={`${knownExts.length} known extinguisher${knownExts.length!==1?"s":""} · ${doneN} inspected this visit`} back onBack={()=>{setSelLoc(null);setStage("locations");}}/>
+      <div style={{padding:"14px 16px"}}>
+        {/* Known extinguishers */}
+        {knownExts.length===0&&<div style={{background:`${C.info}08`,border:`1px solid ${C.info}22`,borderRadius:12,padding:"14px",marginBottom:12,fontSize:12,color:C.textSub,lineHeight:1.5}}>
+          No extinguishers have been logged at this location yet. Tap <b>Add New</b> below for each one you find.
+        </div>}
+        {knownExts.map(ext=>{
+          const done=doneThisVisit.has(ext.id);
+          const last=ext.last_inspected_at?new Date(ext.last_inspected_at).toLocaleDateString():"—";
+          return<div key={ext.id} style={{background:C.card,border:`1px solid ${done?C.success+"66":C.border}`,borderLeft:`3px solid ${done?C.success:C.muted}`,borderRadius:10,padding:"11px 13px",marginBottom:8,display:"flex",alignItems:"center",gap:10}}>
+            <div style={{width:28,height:28,borderRadius:"50%",background:done?C.success:`${C.muted}22`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:14,color:done?"#000":C.muted,flexShrink:0}}>{done?"✓":"○"}</div>
+            <div style={{flex:1,minWidth:0}}>
+              <div style={{fontFamily:F,fontWeight:700,fontSize:13,color:C.text,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{ext.serial_number||"(serial pending OCR)"}</div>
+              <div style={{fontSize:11,color:C.muted}}>Last inspected: {last}</div>
+            </div>
+            {!done&&<button onClick={()=>startInspection(ext)}
+              style={{background:`${C.accent}22`,border:`1px solid ${C.accent}55`,borderRadius:8,padding:"6px 12px",color:C.accent,fontFamily:F,fontWeight:700,fontSize:12,cursor:"pointer",flexShrink:0}}>Inspect →</button>}
+          </div>;
+        })}
+
+        {/* Add new */}
+        <button onClick={()=>startInspection({isNew:true})}
+          style={{width:"100%",background:`${C.info}15`,border:`2px dashed ${C.info}55`,borderRadius:12,padding:"15px",color:C.info,fontFamily:F,fontWeight:700,fontSize:14,cursor:"pointer",marginTop:6,marginBottom:14}}>
+          + Add new extinguisher found here
+        </button>
+
+        {/* Finish location */}
+        <button onClick={finishLocation}
+          style={{width:"100%",background:doneN>0||undone.length===0?C.success:C.card,color:doneN>0||undone.length===0?"#000":C.muted,border:doneN>0||undone.length===0?"none":`1px solid ${C.border}`,borderRadius:12,padding:"14px",fontFamily:F,fontWeight:900,fontSize:15,cursor:"pointer",letterSpacing:".04em"}}>
+          {undone.length===0&&knownExts.length>0?"✅ All extinguishers inspected · finish here":doneN>0?`Done at this location (${doneN})`:"No more extinguishers here"}
+        </button>
+      </div>
+    </div>;
+  }
+
+  // Stage: locations
+  const monthLabel=new Date().toLocaleDateString("en-US",{month:"long",year:"numeric"});
+  return<div style={{paddingBottom:80}}>
+    <PageHdr title="Fire Extinguishers" sub={`MSHA monthly inspection · ${monthLabel}`} back onBack={onBack}/>
+    <div style={{padding:"14px 16px"}}>
+      {loading?<div style={{textAlign:"center",padding:40,color:C.muted}}>Loading locations…</div>:
+       locs.length===0?<div style={{background:`${C.accent}08`,border:`1px solid ${C.accent}22`,borderRadius:14,padding:"24px 18px",textAlign:"center"}}>
+        <div style={{fontSize:42,marginBottom:8}}>🧯</div>
+        <div style={{fontFamily:F,fontWeight:900,fontSize:18,color:C.accent,marginBottom:4}}>No locations configured</div>
+        <div style={{fontSize:12,color:C.muted,lineHeight:1.6}}>Ask your mine manager to add extinguisher locations from Settings → Extinguisher Locations before you can run inspections.</div>
+      </div>:
+       <>
+        <div style={{background:`${C.info}08`,border:`1px solid ${C.info}22`,borderRadius:10,padding:"10px 13px",marginBottom:12,fontSize:12,color:C.textSub,lineHeight:1.5}}>
+          Pick a location, then log each extinguisher you find. <b style={{color:C.text}}>Take a photo of the serial tag</b> — OCR will fill the serial later.
+        </div>
+        {locs.map(l=>{
+          const inspectedThisMonth=insptByLoc[l.id]||0;
+          const fresh=inspectedThisMonth>0;
+          return<button key={l.id} onClick={()=>openLocation(l)}
+            style={{width:"100%",background:C.card,border:`1px solid ${fresh?C.success+"55":C.border}`,borderLeft:`4px solid ${fresh?C.success:C.amber}`,borderRadius:12,padding:"14px 15px",marginBottom:8,cursor:"pointer",textAlign:"left",display:"flex",alignItems:"center",gap:12}}>
+            <div style={{fontSize:28,flexShrink:0}}>🧯</div>
+            <div style={{flex:1,minWidth:0}}>
+              <div style={{fontFamily:F,fontWeight:900,fontSize:16,color:C.text}}>{l.name}</div>
+              {l.description&&<div style={{fontSize:11,color:C.muted,marginTop:2}}>{l.description}</div>}
+              <div style={{fontSize:11,color:fresh?C.success:C.amber,marginTop:3,fontFamily:F,fontWeight:700}}>
+                {fresh?`✓ ${inspectedThisMonth} inspection${inspectedThisMonth!==1?"s":""} this month`:"⚠ Not inspected this month"}
+              </div>
+            </div>
+            <span style={{color:C.muted,fontSize:18,flexShrink:0}}>›</span>
+          </button>;
+        })}
+       </>
+      }
+    </div>
+  </div>;
+}
+
 function Nav({active,set,role}){
   const lv=ROLES[role]?.level||1;
-  const tabs=[{id:"board",icon:"📡",label:"Live"},{id:"ops",icon:"📈",label:"Production"},{id:"checks",icon:"✅",label:"Checks"},{id:"perf",icon:"👷",label:"Performance"},{id:"intel",icon:"🧠",label:"Intel"},{id:"comply",icon:"📋",label:"Comply",mgr:true},{id:"scoring",icon:"📊",label:"Rankings",mgr:true}].filter(t=>(!t.op||lv===1)&&(!t.mgr||lv>=2));
+  const tabs=[{id:"board",icon:"📡",label:"Live"},{id:"ops",icon:"📈",label:"Production"},{id:"checks",icon:"✅",label:"Checks"},{id:"records",icon:"📁",label:"Records"},{id:"perf",icon:"👷",label:"Performance"},{id:"intel",icon:"🧠",label:"Intel"},{id:"comply",icon:"📋",label:"Comply",mgr:true},{id:"scoring",icon:"📊",label:"Rankings",mgr:true}].filter(t=>(!t.op||lv===1)&&(!t.mgr||lv>=2));
   return <div style={{position:"fixed",bottom:0,left:"50%",transform:"translateX(-50%)",width:"100%",maxWidth:420,background:`${C.surface}f5`,backdropFilter:"blur(12px)",borderTop:`1px solid ${C.border}`,display:"flex",zIndex:100}}>
     {tabs.map(t=><button key={t.id} onClick={()=>set(t.id)} style={{flex:1,padding:"9px 0",background:"none",border:"none",color:active===t.id?C.accent:C.muted,display:"flex",flexDirection:"column",alignItems:"center",gap:2,fontSize:active===t.id?10:9,fontFamily:F,fontWeight:active===t.id?700:400,cursor:"pointer",borderTop:active===t.id?`2px solid ${C.accent}`:"2px solid transparent"}}>
       <span style={{fontSize:17}}>{t.icon}</span>{t.label}
@@ -3935,6 +4473,7 @@ function MineOpsApp() {
     if(flow==="ticketDetail")return <TicketDetailScreen ticketId={window.__currentTicketId} activeMine={activeMine} user={user} allMachines={allMachines} onBack={()=>setFlow("tickets")}/>
     if(flow==="plants")return <PlantsAdminScreen activeMine={activeMine} onBack={()=>setFlow("settings")}/>
     if(tab==="ops")return <ProductionScreen user={user} activeMine={activeMine} activeShiftId={activeShiftId} machineId={user?.machine} role={user?.role} allMachines={allMachines} remoteOperators={remoteOperators} onShiftEnded={()=>setActiveShiftId(null)}/>
+    if(tab==="records")return <RecordsHub activeMine={activeMine} allMachines={allMachines} remoteOperators={remoteOperators} onBack={()=>setTab("board")}/>
     if(tab==="checks")return <ChecksHub allMachines={allMachines} catDemo={catDemo} activeMine={activeMine} activeShiftId={activeShiftId} user={user}/>
     if(tab==="perf")return <MachinePerformanceScreen allMachines={allMachines} custPerfData={custPerfData}/>
     if(tab==="intel")return <IntelligenceHub/>
@@ -3944,8 +4483,8 @@ function MineOpsApp() {
   }
   return <div style={{maxWidth:420,margin:"0 auto",height:"100vh",display:"flex",flexDirection:"column",background:C.bg,position:"relative",overflow:"hidden"}}>
     {showSignOut&&<SignOutConfirm onConfirm={handleSignOut} onCancel={()=>setShowSignOut(false)}/>}
-    {menuOpen&&<MenuOverlay user={user} allMachines={allMachines} activeMine={activeMine} onNav={t=>{if(t==="settings"||t==="tickets"||t==="reportIssue"||t==="ticketDetail"||t==="workplaceExam"||t==="workplaceAreas"){setFlow(t);}else{setTab(t);setFlow("app");}}} onAddMachine={()=>setFlow("addMachine")} onVehicleCheck={()=>setFlow("vehicleCheck")} onInspHistory={()=>{setFlow("inspHistory");setMenuOpen(false)}} onClose={()=>setMenuOpen(false)}/>}
-    {user&&!["onboarding","createMine","joinMine","subscription","vlSetup","login","app","vehicleCheck","addMachine","photoManager","settings","plants","inspHistory"].includes(flow)&&
+    {menuOpen&&<MenuOverlay user={user} allMachines={allMachines} activeMine={activeMine} onNav={t=>{if(t==="settings"||t==="tickets"||t==="reportIssue"||t==="ticketDetail"||t==="workplaceExam"||t==="workplaceAreas"||t==="fireInspect"||t==="extinguisherLocations"){setFlow(t);}else{setTab(t);setFlow("app");}}} onAddMachine={()=>setFlow("addMachine")} onVehicleCheck={()=>setFlow("vehicleCheck")} onInspHistory={()=>{setFlow("inspHistory");setMenuOpen(false)}} onClose={()=>setMenuOpen(false)}/>}
+    {user&&!["onboarding","createMine","joinMine","subscription","vlSetup","login","app","vehicleCheck","addMachine","photoManager","settings","plants","inspHistory","extinguisherLocations"].includes(flow)&&
       <div style={{flexShrink:0,background:`${C.surface}f2`,backdropFilter:"blur(10px)",borderBottom:`1px solid ${C.border}`,padding:"9px 15px",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
         <div style={{display:"flex",alignItems:"center",gap:10}}>
           <button onClick={()=>setMenuOpen(true)} style={{background:"none",border:`1px solid ${C.border}`,borderRadius:8,padding:"5px 10px",color:C.muted,fontSize:16,cursor:"pointer",lineHeight:1}}>☰</button>
@@ -3965,8 +4504,10 @@ function MineOpsApp() {
     {flow==="addMachine"&&<div style={{flex:1,overflowY:"auto"}}><AddMachineScreen allMachines={allMachines} onAdd={handleAddMachine} onBack={()=>setFlow("app")}/></div>}
     {flow==="photoManager"&&<div style={{flex:1,overflowY:"auto"}}><PhotoManagerScreen/></div>}
     {flow==="inspHistory"&&<div style={{flex:1,overflowY:"auto"}}><PreshiftHistoryScreen mineId={activeMine?.id} onBack={()=>setFlow("app")}/></div>}
-    {flow==="settings"&&<div style={{flex:1,overflowY:"auto"}}><SettingsScreen onClose={()=>setFlow("app")} onNavPlants={()=>setFlow("plants")} onNavWorkplaceAreas={()=>setFlow("workplaceAreas")}/></div>}
+    {flow==="settings"&&<div style={{flex:1,overflowY:"auto"}}><SettingsScreen onClose={()=>setFlow("app")} onNavPlants={()=>setFlow("plants")} onNavWorkplaceAreas={()=>setFlow("workplaceAreas")} onNavExtinguisherLocations={()=>setFlow("extinguisherLocations")}/></div>}
     {flow==="plants"&&<div style={{flex:1,overflowY:"auto"}}><PlantsAdminScreen activeMine={activeMine} onBack={()=>setFlow("settings")}/></div>}
+    {flow==="extinguisherLocations"&&<div style={{flex:1,overflowY:"auto"}}><ExtinguisherLocationsAdminScreen activeMine={activeMine} onBack={()=>setFlow("settings")}/></div>}
+    {flow==="fireInspect"&&<div style={{flex:1,overflowY:"auto"}}><FireExtinguisherInspectScreen activeMine={activeMine} user={user} onBack={()=>setFlow("app")}/></div>}
     {flow==="workplaceExam"&&<div style={{flex:1,overflowY:"auto"}}><WorkplaceExamScreen activeMine={activeMine} activeShiftId={activeShiftId} user={user} onComplete={()=>setFlow("app")} onBack={()=>setFlow("app")}/></div>}
     {flow==="workplaceAreas"&&<div style={{flex:1,overflowY:"auto"}}><WorkplaceAreasAdminScreen activeMine={activeMine} onBack={()=>setFlow("settings")}/></div>}
     {flow==="reportIssue"&&<div style={{flex:1,overflowY:"auto"}}><CreateTicketScreen activeMine={activeMine} activeShiftId={activeShiftId} user={user} allMachines={allMachines} defaultMachineId={user?.machine} onDone={()=>setFlow("tickets")} onBack={()=>setFlow("app")}/></div>}
