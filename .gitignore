@@ -25,3 +25,4 @@ dist-ssr
 node_modules
 .vercel
 src/App.jsx.bak.*
+src/App.jsx.bak

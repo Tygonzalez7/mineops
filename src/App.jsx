@@ -1543,6 +1543,10 @@ function MenuOverlay({user,onNav,onAddMachine,onVehicleCheck,onClose,allMachines
       </div>
 
       <div style={{padding:"12px 0"}}>
+        <Section title="Issues">
+          <Item icon="🎟" label="Handover Tickets" sub="Open issues · machines needing attention" color={C.danger} onClick={()=>{onNav("tickets");onClose();}}/>
+          <Item icon="🚨" label="Report Issue" sub="Create a new handover ticket" color={C.amber} onClick={()=>{onNav("reportIssue");onClose();}}/>
+        </Section>
         <Section title="Operations">
           <Item icon="📡" label="Live Board" sub="All active operators · crusher feed" onClick={()=>{onNav("board");onClose();}}/>
           {ROLES[user?.role]?.level===1&&<Item icon="🪣" label="My Operations" sub="Scoop logging · idle tracking · blast schedule" onClick={()=>{onNav("ops");onClose();}}/>}
