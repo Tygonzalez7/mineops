@@ -3178,7 +3178,15 @@ function MineOpsApp() {
     {flow==="truckQ"&&<div style={{flex:1,overflowY:"auto"}}><TruckQuestion user={user} onAnswer={handleTruck}/></div>}
     {flow==="truckCheck"&&<div style={{flex:1,overflowY:"auto"}}><TruckCheckScreen onComplete={()=>setFlow(lv===1?"machines":"app")}/></div>}
     {flow==="machines"&&<div style={{flex:1,overflowY:"auto"}}><MachineSelectScreen allMachines={allMachines} catDemo={catDemo} isAdmin={user?.role==="admin"} activeMine={activeMine} activeShiftId={activeShiftId} user={user} onAddMachine={()=>setFlow("addMachine")} onComplete={()=>setFlow("app")}/></div>}
-    {(flow==="app"||flow==="vehicleCheck"||flow==="addMachine"||flow==="photoManager"||flow==="settings"||flow==="plants"||flow==="reportIssue"||flow==="tickets"||flow==="ticketDetail"||flow==="inspHistory")&&<>
+    {flow==="addMachine"&&<div style={{flex:1,overflowY:"auto"}}><AddMachineScreen allMachines={allMachines} onAdd={handleAddMachine} onBack={()=>setFlow("app")}/></div>}
+    {flow==="photoManager"&&<div style={{flex:1,overflowY:"auto"}}><PhotoManagerScreen/></div>}
+    {flow==="inspHistory"&&<div style={{flex:1,overflowY:"auto"}}><PreshiftHistoryScreen mineId={activeMine?.id} onBack={()=>setFlow("app")}/></div>}
+    {flow==="settings"&&<div style={{flex:1,overflowY:"auto"}}><SettingsScreen onClose={()=>setFlow("app")} onNavPlants={()=>setFlow("plants")}/></div>}
+    {flow==="plants"&&<div style={{flex:1,overflowY:"auto"}}><PlantsAdminScreen activeMine={activeMine} onBack={()=>setFlow("settings")}/></div>}
+    {flow==="reportIssue"&&<div style={{flex:1,overflowY:"auto"}}><CreateTicketScreen activeMine={activeMine} activeShiftId={activeShiftId} user={user} allMachines={allMachines} defaultMachineId={user?.machine} onDone={()=>setFlow("tickets")} onBack={()=>setFlow("app")}/></div>}
+    {flow==="tickets"&&<div style={{flex:1,overflowY:"auto"}}><HandoverTicketsScreen activeMine={activeMine} user={user} allMachines={allMachines} onCreate={()=>setFlow("reportIssue")} onSelect={t=>{window.__currentTicketId=t.id;setFlow("ticketDetail");}} onBack={()=>setFlow("app")}/></div>}
+    {flow==="ticketDetail"&&<div style={{flex:1,overflowY:"auto"}}><TicketDetailScreen ticketId={window.__currentTicketId} activeMine={activeMine} user={user} allMachines={allMachines} onBack={()=>setFlow("tickets")}/></div>}
+    {(flow==="app"||flow==="vehicleCheck")&&<>
       <div style={{flexShrink:0,background:`${C.surface}f2`,backdropFilter:"blur(10px)",borderBottom:`1px solid ${C.border}`,padding:"9px 15px",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
         <div style={{display:"flex",alignItems:"center",gap:10}}>
           <button onClick={()=>setMenuOpen(true)} style={{background:"none",border:`1px solid ${C.border}`,borderRadius:8,padding:"5px 10px",color:C.muted,fontSize:16,cursor:"pointer",lineHeight:1}}>☰</button>
