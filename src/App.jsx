@@ -1400,44 +1400,189 @@ function ProductionScreen({user,activeMine,activeShiftId,machineId,role,allMachi
 }
 
 // ── Machine Check ──────────────────────────────────────────────────────────
+// ── Pre-start Item Row ────────────────────────────────────────────────────
+// One row per PRESTART item. Photo-required items render a "📷 REQ" badge
+// and block the checkbox until a photo is captured. Photo-optional items
+// get a small inline camera button.
+function PrestartItemRow({item,last,checked,canCheck,required,photo,onToggle,onPhotoCaptured,onPhotoCleared}){
+  const fileRef=useRef(null);
+  const[thumbUrl,setThumbUrl]=useState(null);
+  useEffect(()=>{
+    if(!photo){setThumbUrl(null);return;}
+    const u=URL.createObjectURL(photo);
+    setThumbUrl(u);
+    return()=>URL.revokeObjectURL(u);
+  },[photo]);
+  const onPick=e=>{
+    const f=e.target.files?.[0];
+    if(f)onPhotoCaptured(f);
+    e.target.value="";
+  };
+  const badgeOK=photo;
+  const badgeCol=badgeOK?C.success:C.danger;
+  return<div style={{display:"flex",alignItems:"flex-start",gap:10,padding:"12px 0",borderBottom:last?"none":`1px solid ${C.border}22`}}>
+    <div onClick={onToggle} title={canCheck?"":"Capture photo first"}
+      style={{width:26,height:26,borderRadius:7,background:checked?C.success:"transparent",border:`2px solid ${checked?C.success:(canCheck?C.border:C.danger)}`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:15,flexShrink:0,cursor:canCheck?"pointer":"not-allowed",transition:"all .15s",marginTop:1,opacity:canCheck?1:0.6}}>{checked?"✓":""}</div>
+    <div style={{flex:1,minWidth:0}}>
+      <div onClick={canCheck?onToggle:undefined} style={{display:"flex",alignItems:"center",gap:8,cursor:canCheck?"pointer":"default",flexWrap:"wrap"}}>
+        <span style={{fontSize:14,color:checked?C.text:C.textSub,flex:1,lineHeight:1.3,minWidth:120}}>{item.label}</span>
+        {required&&<span style={{background:`${badgeCol}22`,color:badgeCol,border:`1px solid ${badgeCol}55`,borderRadius:6,padding:"2px 7px",fontSize:9,fontFamily:F,fontWeight:700,letterSpacing:".04em",whiteSpace:"nowrap"}}>📷 {badgeOK?"OK":"REQ"}</span>}
+        {!required&&!photo&&<button onClick={e=>{e.stopPropagation();fileRef.current?.click();}}
+          style={{background:"none",border:`1px solid ${C.border}`,borderRadius:6,padding:"3px 7px",color:C.muted,fontSize:11,cursor:"pointer",lineHeight:1}} title="Attach photo (optional)">📷+</button>}
+      </div>
+      {(required||photo)&&<div style={{display:"flex",alignItems:"center",gap:8,marginTop:6}}>
+        {photo?<>
+          {thumbUrl&&<img src={thumbUrl} alt="" style={{width:48,height:48,borderRadius:6,objectFit:"cover",border:`1px solid ${C.border}`,flexShrink:0}}/>}
+          <button onClick={()=>fileRef.current?.click()} style={{background:"none",border:`1px solid ${C.border}`,borderRadius:7,padding:"5px 9px",color:C.muted,fontSize:11,fontFamily:F,fontWeight:700,cursor:"pointer"}}>Retake</button>
+          <button onClick={onPhotoCleared} style={{background:"none",border:`1px solid ${C.danger}33`,borderRadius:7,padding:"5px 9px",color:C.danger,fontSize:11,fontFamily:F,fontWeight:700,cursor:"pointer"}}>✕</button>
+        </>:<button onClick={()=>fileRef.current?.click()}
+          style={{background:`${C.accent}15`,border:`1px dashed ${C.accent}55`,borderRadius:8,padding:"7px 12px",color:C.accent,fontSize:12,fontFamily:F,fontWeight:700,cursor:"pointer"}}>📷 Capture photo</button>}
+      </div>}
+    </div>
+    <input ref={fileRef} type="file" accept="image/*" capture="environment" style={{display:"none"}} onChange={onPick}/>
+  </div>;
+}
+
+// ── Daily Machine Check ───────────────────────────────────────────────────
 function MachineCheckScreen({allMachines,catDemo,activeMine,activeShiftId,user}){
-  const[sel,setSel]=useState(null);const[checks,setChecks]=useState({});const[done,setDone]=useState({});const[fuel,setFuel]=useState("");const[fuelErr,setFuelErr]=useState("");
-  const count=id=>Object.values(checks[id]||{}).filter(Boolean).length;const allDone=id=>PRESTART.every(c=>(checks[id]||{})[c.id]);
-  const handleFuel=v=>{setFuel(v);const n=parseInt(v);if(v==="")return setFuelErr("");if(isNaN(n)||n<1||n>100)return setFuelErr("Enter 1–100%");setFuelErr("");};
-  if(sel){const m=allMachines.find(x=>x.id===sel),cat=catDemo.find(x=>x.id===sel)?.data,isDone=done[sel],cnt=count(sel);const fuelOk=parseInt(fuel)>=1&&parseInt(fuel)<=100&&!fuelErr;const can=allDone(sel)&&fuelOk;
-    return <div style={{paddingBottom:20}}><PageHdr title="Pre-Start Inspection" sub={`${m?.model} · HSMP minimum`} back onBack={()=>setSel(null)}/>
-      {isDone?<div style={{textAlign:"center",padding:"40px 20px"}}><div style={{fontSize:52,marginBottom:10}}>✅</div><div style={{fontFamily:F,fontWeight:900,fontSize:24,color:C.success}}>Signed Off</div><div style={{fontSize:12,color:C.muted,marginTop:5}}>{m?.model} · {new Date().toLocaleTimeString()}</div><div style={{background:`${C.success}12`,border:`1px solid ${C.success}33`,borderRadius:10,padding:"12px 16px",marginTop:20,textAlign:"left"}}><div style={{fontSize:12,color:C.success,fontFamily:F,fontWeight:700}}>Pre-start logged. Machine cleared for operation.</div><div style={{fontSize:11,color:C.muted,marginTop:4}}>Contact supervisor if issues arise during shift.</div></div></div>:
+  const[sel,setSel]=useState(null);
+  const[checks,setChecks]=useState({});      // {machineId: {itemKey: bool}}
+  const[photos,setPhotos]=useState({});      // {machineId: {itemKey: File}}
+  const[done,setDone]=useState({});          // {machineId: bool}
+  const[fuel,setFuel]=useState("");
+  const[fuelErr,setFuelErr]=useState("");
+  const[submitting,setSubmitting]=useState(false);
+  const overrides=useCheckItemConfig(activeMine);
+
+  const setPhoto=(mid,key,file)=>setPhotos(p=>({...p,[mid]:{...(p[mid]||{}),[key]:file}}));
+  const itemCheckable=(mid,key)=>{
+    if(!isPhotoRequired("prestart",key,overrides))return true;
+    return !!photos[mid]?.[key];
+  };
+  const count=id=>Object.values(checks[id]||{}).filter(Boolean).length;
+  const allItemsDone=id=>PRESTART.every(c=>(checks[id]||{})[c.id]);
+  const requiredMissingCount=id=>PRESTART.filter(c=>isPhotoRequired("prestart",c.id,overrides)&&!photos[id]?.[c.id]).length;
+  const handleFuel=v=>{
+    setFuel(v);
+    const n=parseInt(v);
+    if(v==="")return setFuelErr("");
+    if(isNaN(n)||n<1||n>100)return setFuelErr("Enter 1–100%");
+    setFuelErr("");
+  };
+
+  if(sel){
+    const m=allMachines.find(x=>x.id===sel);
+    const cat=catDemo.find(x=>x.id===sel)?.data;
+    const isDone=done[sel];
+    const cnt=count(sel);
+    const fuelOk=parseInt(fuel)>=1&&parseInt(fuel)<=100&&!fuelErr;
+    const reqMissing=requiredMissingCount(sel);
+    const can=allItemsDone(sel)&&fuelOk&&reqMissing===0;
+    return <div style={{paddingBottom:20}}>
+      <PageHdr title="Pre-Start Inspection" sub={`${m?.model} · HSMP minimum`} back onBack={()=>setSel(null)}/>
+      {isDone?<div style={{textAlign:"center",padding:"40px 20px"}}>
+        <div style={{fontSize:52,marginBottom:10}}>✅</div>
+        <div style={{fontFamily:F,fontWeight:900,fontSize:24,color:C.success}}>Signed Off</div>
+        <div style={{fontSize:12,color:C.muted,marginTop:5}}>{m?.model} · {new Date().toLocaleTimeString()}</div>
+        <div style={{background:`${C.success}12`,border:`1px solid ${C.success}33`,borderRadius:10,padding:"12px 16px",marginTop:20,textAlign:"left"}}>
+          <div style={{fontSize:12,color:C.success,fontFamily:F,fontWeight:700}}>Pre-start logged. Machine cleared for operation.</div>
+          <div style={{fontSize:11,color:C.muted,marginTop:4}}>Contact supervisor if issues arise during shift.</div>
+        </div>
+      </div>:
       <div style={{padding:"13px 15px"}}>
-        {cat?.faults?.map((f,i)=><div key={i} style={{display:"flex",gap:8,background:`${f.sev==="high"?C.danger:C.amber}12`,border:`1px solid ${f.sev==="high"?C.danger:C.amber}30`,borderRadius:8,padding:"8px 11px",marginBottom:9}}><span style={{fontFamily:F,fontWeight:900,fontSize:13,color:f.sev==="high"?C.danger:C.amber,flexShrink:0}}>{f.code}</span><span style={{fontSize:12,color:C.textSub}}>{f.desc}</span></div>)}
-        <div style={{display:"flex",justifyContent:"space-between",fontSize:11,color:C.muted,marginBottom:5}}><span>{cnt} of {PRESTART.length} items</span><span>{Math.round((cnt/PRESTART.length)*100)}%</span></div>
+        {cat?.faults?.map((f,i)=><div key={i} style={{display:"flex",gap:8,background:`${f.sev==="high"?C.danger:C.amber}12`,border:`1px solid ${f.sev==="high"?C.danger:C.amber}30`,borderRadius:8,padding:"8px 11px",marginBottom:9}}>
+          <span style={{fontFamily:F,fontWeight:900,fontSize:13,color:f.sev==="high"?C.danger:C.amber,flexShrink:0}}>{f.code}</span>
+          <span style={{fontSize:12,color:C.textSub}}>{f.desc}</span>
+        </div>)}
+        <div style={{display:"flex",justifyContent:"space-between",fontSize:11,color:C.muted,marginBottom:5}}>
+          <span>{cnt} of {PRESTART.length} items{reqMissing>0?` · ${reqMissing} photo${reqMissing!==1?"s":""} needed`:""}</span>
+          <span>{Math.round((cnt/PRESTART.length)*100)}%</span>
+        </div>
         <Bar value={cnt} max={PRESTART.length} color={cnt===PRESTART.length?C.success:C.accent}/>
-        {viewingPhoto&&<PhotoViewer guide={viewingPhoto} machineType={allMachines.find(x=>x.id===sel)?.type||"Wheel Loader"} onClose={()=>setViewingPhoto(null)}/>}
-        <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:12,padding:"4px 14px",marginTop:13,marginBottom:14}}>{PRESTART.map(c=>{const mt=allMachines.find(x=>x.id===sel)?.type||"Wheel Loader";const tk=mt==="Haul Truck"?"truck":"loader";const hp=!!(PHOTO_GUIDES[tk]?.[c.id]);return <CkRow key={c.id} label={c.label} checked={(checks[sel]||{})[c.id]||false} onChange={()=>setChecks(p=>({...p,[sel]:{...(p[sel]||{}),[c.id]:!(p[sel]||{})[c.id]}}))} checkId={c.id} machineType={mt} onPhoto={hp?id=>setViewingPhoto(id):null}/>;})}</div>
-        <div style={{marginBottom:16}}><div style={{fontSize:12,color:C.muted,marginBottom:6}}>Fuel level (%)<span style={{color:C.danger}}> *</span></div><input type="number" placeholder="e.g. 78" value={fuel} onChange={e=>handleFuel(e.target.value)} style={{background:C.surface,color:C.text,border:`1px solid ${fuelErr?C.danger:parseInt(fuel)>=1&&parseInt(fuel)<=100?C.success:C.border}`,borderRadius:9,padding:"13px 14px",fontSize:16,width:"100%",outline:"none"}}/>{fuelErr&&<div style={{fontSize:11,color:C.danger,marginTop:4}}>{fuelErr}</div>}</div>
+        <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:12,padding:"4px 14px",marginTop:13,marginBottom:14}}>
+          {PRESTART.map((c,i)=>{
+            const required=isPhotoRequired("prestart",c.id,overrides);
+            const photo=photos[sel]?.[c.id]||null;
+            const checked=!!(checks[sel]||{})[c.id];
+            const canCheck=itemCheckable(sel,c.id);
+            return<PrestartItemRow key={c.id} item={c} last={i===PRESTART.length-1}
+              checked={checked} canCheck={canCheck} required={required} photo={photo}
+              onToggle={()=>{if(canCheck)setChecks(p=>({...p,[sel]:{...(p[sel]||{}),[c.id]:!checked}}));}}
+              onPhotoCaptured={file=>setPhoto(sel,c.id,file)}
+              onPhotoCleared={()=>setPhoto(sel,c.id,null)}
+            />;
+          })}
+        </div>
+        <div style={{marginBottom:16}}>
+          <div style={{fontSize:12,color:C.muted,marginBottom:6}}>Fuel level (%)<span style={{color:C.danger}}> *</span></div>
+          <input type="number" placeholder="e.g. 78" value={fuel} onChange={e=>handleFuel(e.target.value)}
+            style={{background:C.surface,color:C.text,border:`1px solid ${fuelErr?C.danger:parseInt(fuel)>=1&&parseInt(fuel)<=100?C.success:C.border}`,borderRadius:9,padding:"13px 14px",fontSize:16,width:"100%",outline:"none",boxSizing:"border-box"}}/>
+          {fuelErr&&<div style={{fontSize:11,color:C.danger,marginTop:4}}>{fuelErr}</div>}
+        </div>
         <button onClick={async()=>{
-          if(!can)return;
-          console.log("[SIGN OFF]","activeMine:",activeMine,"activeShiftId:",activeShiftId,"user:",user,"sel:",sel,"checks:",checks[sel],"fuel:",fuel);
-          setDone(p=>({...p,[sel]:true}));
-          if(activeMine?.id&&activeShiftId&&user?.id){
-            try{
-              await supabase.from("prestart_logs").insert({
-                mine_id:activeMine.id,
-                shift_id:activeShiftId,
-                machine_id:sel,
-                operator_id:user.id,
-                checks_passed:checks[sel]||{},
-                fuel_level:parseInt(fuel)||null,
-                signed_off_at:new Date().toISOString(),
-              });
-            }catch(e){console.error("prestart_log insert:",e);}
-          }
-        }} style={{width:"100%",background:can?C.success:C.border,color:can?"#000":C.muted,border:"none",borderRadius:12,padding:"15px",fontFamily:F,fontWeight:900,fontSize:18,cursor:can?"pointer":"default",transition:"background .2s"}}>{can?"✅ SIGN OFF":"Complete all items + valid fuel level"}</button>
+          if(!can||submitting)return;
+          setSubmitting(true);
+          const machineId=sel;
+          const photoMap=photos[machineId]||{};
+          try{
+            if(activeMine?.id&&activeShiftId&&user?.id){
+              const{data,error}=await supabase.from("prestart_logs").insert({
+                mine_id:activeMine.id,shift_id:activeShiftId,machine_id:machineId,operator_id:user.id,
+                checks_passed:checks[machineId]||{},fuel_level:parseInt(fuel)||null,signed_off_at:new Date().toISOString(),
+              }).select().single();
+              if(error)throw error;
+              const logId=data?.id;
+              if(logId){
+                const tasks=Object.entries(photoMap)
+                  .filter(([,f])=>!!f)
+                  .map(([itemKey,file])=>uploadCheckPhoto({file,mineId:activeMine.id,logType:"prestart",logId,itemKey,uploadedBy:user.id}));
+                await Promise.all(tasks);
+              }
+            }
+            setDone(p=>({...p,[machineId]:true}));
+          }catch(e){
+            console.error("prestart sign-off:",e);
+            alert("Could not sign off: "+(e.message||e));
+          }finally{setSubmitting(false);}
+        }} disabled={!can||submitting}
+          style={{width:"100%",background:can&&!submitting?C.success:C.border,color:can&&!submitting?"#000":C.muted,border:"none",borderRadius:12,padding:"15px",fontFamily:F,fontWeight:900,fontSize:18,cursor:can&&!submitting?"pointer":"default",transition:"background .2s"}}>
+          {submitting?"Saving…":can?"✅ SIGN OFF":reqMissing>0?`${reqMissing} photo${reqMissing!==1?"s":""} required`:"Complete all items + valid fuel level"}
+        </button>
       </div>}
     </div>;
   }
-  return <div style={{paddingBottom:20}}><PageHdr title="Daily Machine Check" sub="MQSHA Reg 2017 minimum — select machine"/>
-    <div style={{padding:"13px 15px"}}><div style={{display:"flex",gap:5,marginBottom:12}}><Stat label="Signed Off" value={Object.values(done).filter(Boolean).length} color={C.success}/><Stat label="Pending" value={allMachines.length-Object.values(done).filter(Boolean).length} color={C.amber}/></div>
-      {allMachines.map(m=>{const cat=catDemo.find(x=>x.id===m.id)?.data,isDone=done[m.id],cnt=count(m.id),sc=STATUS_COL[cat?.status]||C.info;return <Card key={m.id} onClick={()=>setSel(m.id)} style={{padding:"13px 14px",border:`1px solid ${isDone?C.success:C.border}`}}><div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:7}}><div><div style={{fontFamily:F,fontWeight:900,fontSize:17,color:C.text}}>{m.model}</div><div style={{fontSize:11,color:C.muted}}>{m.type} · {cat?.sn||"Custom"}</div></div><Pill label={isDone?"✓ SIGNED OFF":cat?.status?.toUpperCase()||"NEW"} color={isDone?C.success:sc}/></div>{!isDone&&cnt>0&&<div><div style={{fontSize:10,color:C.muted,marginBottom:3}}>{cnt}/{PRESTART.length} items</div><Bar value={cnt} max={PRESTART.length} color={C.accent} thin/></div>}{isDone?<div style={{fontSize:11,color:C.success}}>✓ Pre-start complete</div>:cnt===0?<div style={{fontSize:11,color:C.muted}}>Tap to begin →</div>:null}</Card>;})}
+
+  return <div style={{paddingBottom:20}}>
+    <PageHdr title="Daily Machine Check" sub="MQSHA Reg 2017 minimum — select machine"/>
+    <div style={{padding:"13px 15px"}}>
+      <div style={{display:"flex",gap:5,marginBottom:12}}>
+        <Stat label="Signed Off" value={Object.values(done).filter(Boolean).length} color={C.success}/>
+        <Stat label="Pending" value={Math.max(0,allMachines.length-Object.values(done).filter(Boolean).length)} color={C.amber}/>
+      </div>
+      {allMachines.length===0?<div style={{textAlign:"center",padding:"50px 22px"}}>
+        <div style={{fontSize:46,marginBottom:10,opacity:.6}}>🚛</div>
+        <div style={{fontFamily:F,fontWeight:900,fontSize:18,color:C.text,marginBottom:6}}>No machines in fleet</div>
+        <div style={{fontSize:12,color:C.muted,lineHeight:1.6,maxWidth:280,margin:"0 auto"}}>Ask your mine manager to add a machine from Setup before starting pre-start checks.</div>
+      </div>:allMachines.map(m=>{
+        const cat=catDemo.find(x=>x.id===m.id)?.data;
+        const isDone=done[m.id];
+        const cnt=count(m.id);
+        const sc=STATUS_COL[cat?.status]||C.info;
+        return <Card key={m.id} onClick={()=>setSel(m.id)} style={{padding:"13px 14px",border:`1px solid ${isDone?C.success:C.border}`}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:7}}>
+            <div>
+              <div style={{fontFamily:F,fontWeight:900,fontSize:17,color:C.text}}>{m.model}</div>
+              <div style={{fontSize:11,color:C.muted}}>{m.type} · {cat?.sn||m.serial_number||"Custom"}</div>
+            </div>
+            <Pill label={isDone?"✓ SIGNED OFF":cat?.status?.toUpperCase()||"NEW"} color={isDone?C.success:sc}/>
+          </div>
+          {!isDone&&cnt>0&&<div>
+            <div style={{fontSize:10,color:C.muted,marginBottom:3}}>{cnt}/{PRESTART.length} items</div>
+            <Bar value={cnt} max={PRESTART.length} color={C.accent} thin/>
+          </div>}
+          {isDone?<div style={{fontSize:11,color:C.success}}>✓ Pre-start complete</div>:cnt===0?<div style={{fontSize:11,color:C.muted}}>Tap to begin →</div>:null}
+        </Card>;
+      })}
     </div>
   </div>;
 }
@@ -2104,6 +2249,179 @@ async function getPhotoUrl(storagePath){
   const{data}=await supabase.storage.from("handover").createSignedUrl(storagePath,3600);
   return data?.signedUrl||null;
 }
+// ── Check-photo Helpers ───────────────────────────────────────────────────
+// Shared by Feature A (inline per-item evidence on checks) and Feature B
+// (reference photo library). All photos client-side compressed to ≤1200px
+// before upload to save storage and bandwidth.
+
+async function compressImage(file,maxDim=1200,quality=0.85){
+  if(!file)return null;
+  // Skip compression for tiny files (already small).
+  if(file.size<300_000&&!/heic|heif/i.test(file.type||""))return file;
+  return await new Promise((resolve,reject)=>{
+    const img=new Image();
+    const url=URL.createObjectURL(file);
+    img.onload=()=>{
+      URL.revokeObjectURL(url);
+      const{width,height}=img;
+      const scale=Math.min(1,maxDim/Math.max(width,height));
+      const w=Math.max(1,Math.round(width*scale));
+      const h=Math.max(1,Math.round(height*scale));
+      const canvas=document.createElement("canvas");
+      canvas.width=w;canvas.height=h;
+      const ctx=canvas.getContext("2d");
+      if(!ctx){reject(new Error("canvas 2d unavailable"));return;}
+      ctx.drawImage(img,0,0,w,h);
+      canvas.toBlob(blob=>{
+        if(!blob){reject(new Error("toBlob failed"));return;}
+        // Wrap as a File so callers can read .name / .type uniformly.
+        const out=new File([blob],(file.name||"photo").replace(/\.[^.]+$/,"")+".jpg",{type:"image/jpeg"});
+        resolve(out);
+      },"image/jpeg",quality);
+    };
+    img.onerror=()=>{URL.revokeObjectURL(url);reject(new Error("image load failed"));};
+    img.src=url;
+  });
+}
+
+async function uploadCheckPhoto({file,mineId,logType,logId,itemKey,uploadedBy}){
+  if(!file||!mineId||!logType||!logId||!itemKey)return null;
+  let blob=file;
+  try{blob=await compressImage(file);}catch(e){console.warn("compress failed, using original:",e);}
+  const path=`${mineId}/${logType}/${logId}/${itemKey}_${Date.now()}.jpg`;
+  const{error:upErr}=await supabase.storage.from("check-photos").upload(path,blob,{contentType:"image/jpeg",upsert:false});
+  if(upErr){console.error("check-photo upload:",upErr);return null;}
+  const{error:insErr}=await supabase.from("check_photos").insert({
+    mine_id:mineId,log_id:logId,log_type:logType,item_key:itemKey,storage_path:path,uploaded_by:uploadedBy||null,
+  });
+  if(insErr){console.error("check_photos insert:",insErr);}
+  return path;
+}
+async function getCheckPhotoUrl(storagePath){
+  if(!storagePath)return null;
+  const{data}=await supabase.storage.from("check-photos").createSignedUrl(storagePath,3600);
+  return data?.signedUrl||null;
+}
+
+async function uploadReferencePhoto({file,mineId,machineModel,itemKey,caption,uploadedBy,uploadedByName}){
+  if(!file||!mineId||!machineModel||!itemKey)return null;
+  let blob=file;
+  try{blob=await compressImage(file);}catch(e){console.warn("compress failed, using original:",e);}
+  // Sanitise machine_model so it's path-safe.
+  const safeModel=(machineModel||"unknown").replace(/[^a-zA-Z0-9._-]+/g,"_");
+  const path=`${mineId}/${safeModel}/${itemKey}/${Date.now()}.jpg`;
+  const{error:upErr}=await supabase.storage.from("reference-photos").upload(path,blob,{contentType:"image/jpeg",upsert:false});
+  if(upErr){console.error("ref-photo upload:",upErr);return null;}
+  const{error:insErr}=await supabase.from("reference_photos").insert({
+    mine_id:mineId,machine_model:machineModel,item_key:itemKey,storage_path:path,caption:caption||null,
+    uploaded_by:uploadedBy||null,uploaded_by_name:uploadedByName||null,
+  });
+  if(insErr){console.error("reference_photos insert:",insErr);}
+  return path;
+}
+async function getReferencePhotoUrl(storagePath){
+  if(!storagePath)return null;
+  const{data}=await supabase.storage.from("reference-photos").createSignedUrl(storagePath,3600);
+  return data?.signedUrl||null;
+}
+
+// ── Photo-required defaults ───────────────────────────────────────────────
+// First-deployment defaults — per-mine overrides live in check_item_config.
+// Operators see a "📷 Required" badge on these and can't sign off without
+// a captured photo.
+const PHOTO_REQUIRED_DEFAULTS={
+  prestart:{
+    oil:true, coolant:true, hyd:true, fuel:true, fire:true,
+    brakes:false, tyres:false, lights:false, horn:false, rops:false,
+  },
+  maintenance:{grease:false, filter:true, service:false},
+  workplace_exam:{},
+  fire_ext:{},
+};
+
+function isPhotoRequired(logType,itemKey,overrides){
+  const key=`${logType}:${itemKey}`;
+  if(overrides&&overrides.has(key))return !!overrides.get(key);
+  return !!(PHOTO_REQUIRED_DEFAULTS[logType]?.[itemKey]);
+}
+
+// Hook: load per-mine overrides into a Map keyed by `${logType}:${itemKey}`.
+function useCheckItemConfig(activeMine,refreshTick){
+  const[overrides,setOverrides]=useState(()=>new Map());
+  useEffect(()=>{
+    if(!activeMine?.id){setOverrides(new Map());return;}
+    let cancelled=false;
+    (async()=>{
+      try{
+        const{data}=await supabase.from("check_item_config").select("log_type,item_key,photo_required").eq("mine_id",activeMine.id);
+        if(cancelled)return;
+        const m=new Map();
+        for(const r of data||[])m.set(`${r.log_type}:${r.item_key}`,!!r.photo_required);
+        setOverrides(m);
+      }catch(e){console.error("check_item_config:",e);}
+    })();
+    return()=>{cancelled=true;};
+  },[activeMine?.id,refreshTick]);
+  return overrides;
+}
+
+// ── Check Item Config Screen (admin) ──────────────────────────────────────
+// Lists every known check item across prestart + maintenance, with a toggle
+// to flip photo_required. Writes upserts to check_item_config; falls back to
+// PHOTO_REQUIRED_DEFAULTS when no override exists.
+const CHECK_ITEM_GROUPS=[
+  {logType:"prestart",     label:"Pre-Start Inspection",        items:PRESTART.map(p=>({key:p.id,label:p.label}))},
+  {logType:"maintenance",  label:"Maintenance Gate",            items:[{key:"grease",label:"Greasing"},{key:"filter",label:"Air Filter Blow-Out"},{key:"service",label:"Scheduled Service"}]},
+];
+
+function CheckItemConfigScreen({activeMine,onBack}){
+  const[refresh,setRefresh]=useState(0);
+  const overrides=useCheckItemConfig(activeMine,refresh);
+  const[saving,setSaving]=useState(null); // key currently saving
+  const setRequired=async(logType,itemKey,nextVal)=>{
+    if(!activeMine?.id)return;
+    const k=`${logType}:${itemKey}`;
+    setSaving(k);
+    try{
+      const{error}=await supabase.from("check_item_config").upsert({
+        mine_id:activeMine.id,log_type:logType,item_key:itemKey,
+        photo_required:nextVal,updated_at:new Date().toISOString(),
+      },{onConflict:"mine_id,log_type,item_key"});
+      if(error)throw error;
+      setRefresh(t=>t+1);
+    }catch(e){console.error("config update:",e);alert("Could not save: "+(e.message||e));}
+    finally{setSaving(null);}
+  };
+  return<div style={{paddingBottom:80}}>
+    <PageHdr title="Check Item Configuration" sub="Toggle photo-required per check item · admin only" back onBack={onBack}/>
+    <div style={{padding:"14px 16px"}}>
+      <div style={{background:`${C.info}08`,border:`1px solid ${C.info}22`,borderRadius:10,padding:"10px 12px",marginBottom:14,fontSize:12,color:C.textSub,lineHeight:1.5}}>
+        Items marked <b style={{color:C.danger}}>Required</b> block the operator from signing off the check until a photo is captured. Use this for items where evidence matters (fluids, filters, etc.).
+      </div>
+      {CHECK_ITEM_GROUPS.map(g=><div key={g.logType} style={{marginBottom:16}}>
+        <div style={{fontSize:10,color:C.muted,fontFamily:F,fontWeight:700,letterSpacing:".1em",textTransform:"uppercase",padding:"4px 4px 8px"}}>{g.label}</div>
+        <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:12,overflow:"hidden"}}>
+          {g.items.map((it,i)=>{
+            const k=`${g.logType}:${it.key}`;
+            const required=isPhotoRequired(g.logType,it.key,overrides);
+            const isSaving=saving===k;
+            return<div key={it.key} style={{display:"flex",alignItems:"center",gap:12,padding:"12px 14px",borderBottom:i<g.items.length-1?`1px solid ${C.border}22`:"none"}}>
+              <div style={{flex:1,minWidth:0}}>
+                <div style={{fontFamily:F,fontWeight:700,fontSize:13,color:C.text,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{it.label}</div>
+                <div style={{fontSize:10,color:C.muted,marginTop:2}}>{it.key} · default {PHOTO_REQUIRED_DEFAULTS[g.logType]?.[it.key]?"required":"optional"}</div>
+              </div>
+              <button onClick={()=>setRequired(g.logType,it.key,!required)} disabled={isSaving}
+                style={{background:required?C.danger:C.border,color:required?"#000":C.muted,border:"none",borderRadius:99,padding:"4px 12px",fontFamily:F,fontWeight:700,fontSize:11,cursor:isSaving?"default":"pointer",minWidth:90,letterSpacing:".04em",opacity:isSaving?0.5:1}}>
+                {isSaving?"…":required?"📷 REQUIRED":"OPTIONAL"}
+              </button>
+            </div>;
+          })}
+        </div>
+      </div>)}
+    </div>
+  </div>;
+}
+
 // ── Severity Picker (1-5) ─────────────────────────────────────────────────
 function SeverityPicker({value,onChange}){
   const colors=[C.info,C.success,C.amber,"#e07c2e",C.danger];
@@ -4182,7 +4500,7 @@ function TodayLeaderboard({activeMine,remoteOperators}){
 // the old SettingsScreen and consolidates Add Machine + VisionLink Sync that
 // used to live as scattered menu items.
 
-function SetupHub({user,activeMine,allMachines,onClose,onNavPlants,onNavWorkplaceAreas,onNavExtinguisherLocations,onAddMachine,onPreshiftHistory}){
+function SetupHub({user,activeMine,allMachines,onClose,onNavPlants,onNavWorkplaceAreas,onNavExtinguisherLocations,onNavCheckItemConfig,onAddMachine,onPreshiftHistory}){
   const Row=({icon,title,sub,onClick,color=C.text,right})=><button onClick={onClick} style={{width:"100%",background:C.card,border:`1px solid ${C.border}`,borderRadius:12,padding:"14px 15px",marginBottom:8,cursor:"pointer",display:"flex",alignItems:"center",gap:13,textAlign:"left"}}>
     <span style={{fontSize:22,width:30,textAlign:"center",flexShrink:0}}>{icon}</span>
     <div style={{flex:1,minWidth:0}}>
@@ -4200,6 +4518,9 @@ function SetupHub({user,activeMine,allMachines,onClose,onNavPlants,onNavWorkplac
       <Row icon="🗺"  title="Workplace Areas"        sub="MSHA exam areas · pit benches · crusher · roads"     onClick={onNavWorkplaceAreas}/>
       <Row icon="🧯" title="Extinguisher Locations" sub="Places that have extinguishers · for monthly checks"  onClick={onNavExtinguisherLocations}/>
       <Row icon="🏭" title="Plants"                  sub="Processing lines · crusher + screens + conveyors"    onClick={onNavPlants}/>
+
+      <SectionLabel label="Checks"/>
+      <Row icon="📷" title="Check Item Configuration" sub="Toggle photo-required per check item" onClick={onNavCheckItemConfig}/>
 
       <SectionLabel label="Fleet"/>
       <Row icon="🚛" title="Add Machine"             sub={`${machineCount} machine${machineCount!==1?"s":""} in fleet · add new equipment`} onClick={onAddMachine}/>
@@ -4773,7 +5094,7 @@ function MineOpsApp() {
   return <div style={{maxWidth:420,margin:"0 auto",height:"100vh",display:"flex",flexDirection:"column",background:C.bg,position:"relative",overflow:"hidden"}}>
     {showSignOut&&<SignOutConfirm onConfirm={handleSignOut} onCancel={()=>setShowSignOut(false)}/>}
     {menuOpen&&<MenuOverlay user={user} allMachines={allMachines} activeMine={activeMine} onNav={t=>{if(["setup","tickets","reportIssue","ticketDetail","workplaceExam","workplaceAreas","fireInspect","extinguisherLocations"].includes(t)){setFlow(t);}else{setTab(t);setFlow("app");}}} onVehicleCheck={()=>setFlow("vehicleCheck")} onClose={()=>setMenuOpen(false)}/>}
-    {user&&!["onboarding","createMine","joinMine","subscription","vlSetup","login","app","vehicleCheck","addMachine","setup","plants","inspHistory","extinguisherLocations","workplaceAreas"].includes(flow)&&
+    {user&&!["onboarding","createMine","joinMine","subscription","vlSetup","login","app","vehicleCheck","addMachine","setup","plants","inspHistory","extinguisherLocations","workplaceAreas","checkItemConfig"].includes(flow)&&
       <div style={{flexShrink:0,background:`${C.surface}f2`,backdropFilter:"blur(10px)",borderBottom:`1px solid ${C.border}`,padding:"9px 15px",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
         <div style={{display:"flex",alignItems:"center",gap:10}}>
           <button onClick={()=>setMenuOpen(true)} style={{background:"none",border:`1px solid ${C.border}`,borderRadius:8,padding:"5px 10px",color:C.muted,fontSize:16,cursor:"pointer",lineHeight:1}}>☰</button>
@@ -4792,7 +5113,8 @@ function MineOpsApp() {
     {flow==="machines"&&<div style={{flex:1,overflowY:"auto"}}><MachineSelectScreen allMachines={allMachines} catDemo={catDemo} isAdmin={user?.role==="admin"} activeMine={activeMine} activeShiftId={activeShiftId} user={user} onAddMachine={()=>setFlow("addMachine")} onComplete={()=>setFlow("app")}/></div>}
     {flow==="addMachine"&&<div style={{flex:1,overflowY:"auto"}}><AddMachineScreen allMachines={allMachines} onAdd={handleAddMachine} onBack={()=>setFlow("app")}/></div>}
     {flow==="inspHistory"&&<div style={{flex:1,overflowY:"auto"}}><PreshiftHistoryScreen mineId={activeMine?.id} onBack={()=>setFlow("setup")}/></div>}
-    {flow==="setup"&&<div style={{flex:1,overflowY:"auto"}}><SetupHub user={user} activeMine={activeMine} allMachines={allMachines} onClose={()=>setFlow("app")} onNavPlants={()=>setFlow("plants")} onNavWorkplaceAreas={()=>setFlow("workplaceAreas")} onNavExtinguisherLocations={()=>setFlow("extinguisherLocations")} onAddMachine={()=>setFlow("addMachine")} onPreshiftHistory={()=>setFlow("inspHistory")}/></div>}
+    {flow==="setup"&&<div style={{flex:1,overflowY:"auto"}}><SetupHub user={user} activeMine={activeMine} allMachines={allMachines} onClose={()=>setFlow("app")} onNavPlants={()=>setFlow("plants")} onNavWorkplaceAreas={()=>setFlow("workplaceAreas")} onNavExtinguisherLocations={()=>setFlow("extinguisherLocations")} onNavCheckItemConfig={()=>setFlow("checkItemConfig")} onAddMachine={()=>setFlow("addMachine")} onPreshiftHistory={()=>setFlow("inspHistory")}/></div>}
+    {flow==="checkItemConfig"&&<div style={{flex:1,overflowY:"auto"}}><CheckItemConfigScreen activeMine={activeMine} onBack={()=>setFlow("setup")}/></div>}
     {flow==="plants"&&<div style={{flex:1,overflowY:"auto"}}><PlantsAdminScreen activeMine={activeMine} onBack={()=>setFlow("setup")}/></div>}
     {flow==="extinguisherLocations"&&<div style={{flex:1,overflowY:"auto"}}><ExtinguisherLocationsAdminScreen activeMine={activeMine} onBack={()=>setFlow("setup")}/></div>}
     {flow==="fireInspect"&&<div style={{flex:1,overflowY:"auto"}}><FireExtinguisherInspectScreen activeMine={activeMine} user={user} onBack={()=>setFlow("app")}/></div>}
