@@ -24,3 +24,4 @@ dist-ssr
 *.sw?
 node_modules
 .vercel
+src/App.jsx.bak.*
