@@ -709,7 +709,7 @@ function LiveBoard({remoteOperators,remoteMachines,activeMine}){
 
 
 // ── Machine Performance — weekly, machine-first, relative % ranking ─────────
-function MachinePerformanceScreen({allMachines,custPerfData}){
+function MachinePerformanceScreen({allMachines,custPerfData,activeMine,remoteOperators}){
   const[sel,setSel]=useState(null);
   const cycCol=v=>v<=19?C.success:v<=22?C.accent:C.danger;
   const tphCol=v=>v>=250?C.success:v>=150?C.accent:C.danger;
@@ -755,8 +755,10 @@ function MachinePerformanceScreen({allMachines,custPerfData}){
   const withoutData=machineRows.filter(r=>r.ops.length===0);
 
   return <div style={{paddingBottom:80}} className="up">
-    <PageHdr title="Machine Performance" sub="Weekly averages · tap a machine to rank operators"/>
+    <PageHdr title="Team" sub="Today's operator rankings · weekly machine averages"/>
     <div style={{padding:"12px 15px"}}>
+      <TodayLeaderboard activeMine={activeMine} remoteOperators={remoteOperators}/>
+      <div style={{fontSize:10,color:C.muted,fontFamily:F,fontWeight:700,letterSpacing:".1em",textTransform:"uppercase",padding:"4px 4px 6px",marginTop:6}}>Machines · this week</div>
       {/* Empty: no machines on this mine yet */}
       {allMachines.length===0&&<div style={{textAlign:"center",padding:"56px 22px"}}>
         <div style={{fontSize:46,marginBottom:10,opacity:.6}}>⛏️</div>
@@ -1759,163 +1761,6 @@ function DiagnosticsScreen({allMachines,catDemo}){
   </div>;
 }
 
-// ── Scoring ────────────────────────────────────────────────────────────────
-// ── Performance Rankings — exact machine model, with coaching tips ────────
-// Each machine model is its own leaderboard.
-// Non-leaders get specific, actionable coaching based on the leader's numbers.
-function ScoringHub(){
-  const cycCol=v=>v<=19?C.success:v<=22?C.accent:C.danger;
-  const tphCol=v=>v>=250?C.success:v>=150?C.accent:C.danger;
-
-  // Build coaching tip for an operator vs the leader on the same machine
-  function coachTip(op, leader, truck, m){
-    if(!leader||op===leader)return null;
-    if(truck){
-      const cycleDiff=+(op.cycleMin-leader.cycleMin).toFixed(1);
-      const payDiff=+(leader.payloadT-op.payloadT).toFixed(1);
-      // Trips lost per 10-hr shift: each extra minute of cycle = fewer trips
-      const tripsPerHr=60/op.cycleMin, leaderTripsPerHr=60/leader.cycleMin;
-      const tripsLostPerShift=Math.round((leaderTripsPerHr-tripsPerHr)*10*10)/10;
-      if(cycleDiff>=2){
-        return{icon:"⏱",color:C.danger,
-          headline:`Cycle time ${op.cycleMin}min vs leader's ${leader.cycleMin}min`,
-          detail:`${cycleDiff}min slower per cycle = ~${tripsLostPerShift} fewer trips per 10-hr shift. Tighten your load-haul-dump loop and reduce wait time at the dump point.`};
-      }
-      if(payDiff>1.0){
-        const tphLost=Math.round(payDiff*(60/op.cycleMin));
-        return{icon:"⚖",color:C.amber,
-          headline:`Payload ${op.payloadT}t vs leader's ${leader.payloadT}t per load`,
-          detail:`Loading ${payDiff}t lighter per trip. Load heavier to the rated capacity — that's ~${tphLost} t/hr you're leaving on the table.`};
-      }
-      return{icon:"📈",color:C.success,
-        headline:"Close to the leader",
-        detail:"Numbers are tight. Maintain consistency and focus on reducing queue time at the crusher."};
-    } else {
-      // Loaders / excavators
-      const bucketDiff=op.avgBucketT!=null&&leader.avgBucketT!=null?+(leader.avgBucketT-op.avgBucketT).toFixed(2):0;
-      const cycleDiff=op.cycleMin!=null&&leader.cycleMin!=null?+(op.cycleMin-leader.cycleMin).toFixed(2):0;
-      const bucketPctGap=leader.avgBucketT>0?(bucketDiff/leader.avgBucketT)*100:0;
-      const cyclePctGap=leader.cycleMin>0?(cycleDiff/leader.cycleMin)*100:0;
-      const bucketWeight=bucket=>bucket||m?.bucket||1;
-      // Which gap is bigger?
-      if(bucketPctGap>cyclePctGap&&bucketDiff>0.2){
-        const fillPct=Math.round((op.avgBucketT/bucketWeight(op.avgBucketT))*100);
-        const leaderFill=Math.round((leader.avgBucketT/bucketWeight(leader.avgBucketT))*100);
-        const tphGain=Math.round(bucketDiff*(3600/(op.cycleMin*60)));
-        return{icon:"🪣",color:C.amber,
-          headline:`Bucket fill ${op.avgBucketT}t vs leader's ${leader.avgBucketT}t`,
-          detail:`You're leaving ${bucketDiff}t per scoop on the ground. Dig deeper and fill the bucket — that alone could add ~${tphGain} t/hr. Target: ${leader.avgBucketT}t per bucket.`};
-      }
-      if(cycleDiff>0.15){
-        const pct=Math.round((cycleDiff/leader.cycleMin)*100);
-        const tphLost=Math.round(op.tph*(cycleDiff/op.cycleMin));
-        return{icon:"⚡",color:C.danger,
-          headline:`Cycle time ${op.cycleMin}min vs leader's ${leader.cycleMin}min`,
-          detail:`${cycleDiff}min slower between loads (${pct}% slower). Tighten your dig-to-truck swing and reduce bucket positioning time. Faster cycles = ~${tphLost} more t/hr.`};
-      }
-      return{icon:"📈",color:C.success,
-        headline:"Metrics are close to the leader",
-        detail:"Focus on consistency — maintain bucket fill above 90% and keep cycle time steady. Small gains here compound over a full shift."};
-    }
-  }
-
-  // Build machine sections from MACHINE_PERF — grouped by exact model
-  const activeMachines=BASE_MACHINES.filter(m=>MACHINE_PERF[m.id]?.length>0);
-
-  return <div style={{paddingBottom:80}}>
-    <PageHdr title="Performance Rankings" sub="By machine model · weekly avg · coaching tips"/>
-    <div style={{padding:"14px 16px"}}>
-      <div style={{background:`${C.info}08`,border:`1px solid ${C.info}22`,borderRadius:10,padding:"9px 13px",marginBottom:14}}>
-        <div style={{fontSize:11,color:C.info,fontFamily:F,fontWeight:700}}>Rankings are by exact machine model — same specs, same conditions, fair comparison. Non-leaders get coaching tips.</div>
-      </div>
-      {activeMachines.map(m=>{
-        const truck=isMachTruck(m.type);
-        const raw=[...(MACHINE_PERF[m.id]||[])];
-        const ops=raw.sort((a,b)=>truck?(a.cycleMin||99)-(b.cycleMin||99):b.tph-a.tph);
-        if(!ops.length)return null;
-        const leader=ops[0];
-        const crusher=OP.crushers.find(c=>c.id===m.crusherAssigned);
-        return <div key={m.id} style={{marginBottom:22}}>
-          {/* Machine header */}
-          <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:10,paddingBottom:8,borderBottom:`1px solid ${C.border}`}}>
-            <div style={{flex:1}}>
-              <div style={{fontFamily:F,fontWeight:900,fontSize:18,color:C.text}}>{m.model}</div>
-              <div style={{fontSize:11,color:C.muted}}>{m.type}{m.bucket?` · ${m.bucket}t bucket`:m.payload?` · ${m.payload}t payload`:""}  {crusher?`· ${crusher.name}`:""}  · {ops.length} operator{ops.length!==1?"s":""} this week</div>
-            </div>
-            <div style={{textAlign:"right"}}>
-              <div style={{fontFamily:F,fontWeight:900,fontSize:20,color:truck?cycCol(leader.cycleMin):tphCol(leader.tph),lineHeight:1}}>{truck?leader.cycleMin:leader.tph}</div>
-              <div style={{fontSize:9,color:C.muted}}>{truck?"best min/cycle":"best t/hr"}</div>
-            </div>
-          </div>
-
-          {/* Operator rows */}
-          {ops.map((op,i)=>{
-            const isTop=i===0;
-            const next=ops[i+1];
-            const pv=truck?op.cycleMin:op.tph;
-            const nv=next?(truck?next.cycleMin:next.tph):null;
-            const pctAhead=nv!=null?(truck?Math.round(((nv-pv)/nv)*100):Math.round(((pv-nv)/nv)*100)):null;
-            const pc=truck?cycCol(op.cycleMin):tphCol(op.tph);
-            const tip=!isTop?coachTip(op,leader,truck,m):null;
-            const[showTip,setShowTip]=useState(false);
-            return <div key={i} style={{marginBottom:10}}>
-              {/* Rank row */}
-              <div style={{background:isTop?`${C.accent}0a`:C.card,border:`1.5px solid ${isTop?C.accent+"55":C.border}`,borderRadius:12,padding:"12px 14px"}}>
-                <div style={{display:"flex",alignItems:"center",gap:10}}>
-                  {/* Rank number */}
-                  <div style={{fontFamily:F,fontWeight:900,fontSize:20,width:26,textAlign:"center",color:isTop?C.accent:C.muted}}>#{i+1}</div>
-                  {/* Avatar */}
-                  <div style={{width:38,height:38,borderRadius:"50%",background:`${pc}22`,border:`2px solid ${pc}55`,display:"flex",alignItems:"center",justifyContent:"center",fontFamily:F,fontWeight:700,fontSize:13,color:pc,flexShrink:0}}>{op.avatar}</div>
-                  {/* Name + shifts */}
-                  <div style={{flex:1}}>
-                    <div style={{fontFamily:F,fontWeight:900,fontSize:15}}>{op.name}</div>
-                    <div style={{fontSize:10,color:C.muted}}>{op.shifts} shift{op.shifts!==1?"s":""}{op.fault?" · ⚠ fault":""}</div>
-                  </div>
-                  {/* Primary metric */}
-                  <div style={{textAlign:"right"}}>
-                    <div style={{fontFamily:F,fontWeight:900,fontSize:26,color:pc,lineHeight:1}}>{pv}</div>
-                    <div style={{fontSize:9,color:C.muted}}>{truck?"min/cycle":"t/hr"}</div>
-                  </div>
-                </div>
-
-                {/* Leader badge / gap badge */}
-                {isTop&&<div style={{marginTop:9,background:`${C.accent}18`,border:`1px solid ${C.accent}44`,borderRadius:7,padding:"5px 10px",display:"flex",alignItems:"center",gap:8}}>
-                  <span style={{fontSize:14}}>🏆</span>
-                  <span style={{fontFamily:F,fontWeight:700,fontSize:12,color:C.accent}}>Leader this week</span>
-                  {pctAhead!=null&&pctAhead>0&&<span style={{marginLeft:"auto",fontSize:11,color:C.muted,fontFamily:F}}>{truck?`${pctAhead}% faster than #2`:`+${pctAhead}% vs #2`}</span>}
-                </div>}
-                {!isTop&&pctAhead!=null&&<div style={{marginTop:9,background:`${C.muted}10`,border:`1px solid ${C.border}`,borderRadius:7,padding:"5px 10px",display:"flex",alignItems:"center",gap:6}}>
-                  <span style={{fontFamily:F,fontWeight:700,fontSize:12,color:C.muted}}>{truck?`${Math.round(((pv-leader[truck?"cycleMin":"tph"])/(leader[truck?"cycleMin":"tph"]))*100*(truck?-1:1))}% behind leader`:`${Math.round(((leader.tph-op.tph)/leader.tph)*100)}% behind leader`}</span>
-                  {pctAhead>0&&<span style={{marginLeft:"auto",fontSize:10,color:C.muted}}>{truck?`${pctAhead}% faster than #${i+2}`:`+${pctAhead}% vs #${i+2}`}</span>}
-                </div>}
-              </div>
-
-              {/* Coaching tip (tap to expand for non-leaders) */}
-              {tip&&<div style={{marginTop:4}}>
-                <button onClick={()=>setShowTip(s=>!s)} style={{width:"100%",background:showTip?`${tip.color}12`:`${tip.color}08`,border:`1px solid ${tip.color}${showTip?"55":"22"}`,borderRadius:10,padding:"9px 13px",cursor:"pointer",display:"flex",alignItems:"center",gap:8,textAlign:"left",transition:"all .15s"}}>
-                  <span style={{fontSize:18,flexShrink:0}}>{tip.icon}</span>
-                  <span style={{flex:1,fontFamily:F,fontWeight:700,fontSize:12,color:tip.color}}>{tip.headline}</span>
-                  <span style={{fontSize:11,color:`${tip.color}88`,flexShrink:0}}>{showTip?"▲":"▼ How to improve"}</span>
-                </button>
-                {showTip&&<div style={{background:`${tip.color}08`,border:`1px solid ${tip.color}22`,borderTopWidth:0,borderRadius:"0 0 10px 10px",padding:"10px 14px 12px"}}>
-                  <div style={{fontSize:12,color:C.textSub,lineHeight:1.6}}>{tip.detail}</div>
-                  {/* Secondary stats comparison */}
-                  <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:6,marginTop:10}}>
-                    {(truck
-                      ?[{l:"Your cycle",v:`${op.cycleMin}min`,c:cycCol(op.cycleMin)},{l:"Leader cycle",v:`${leader.cycleMin}min`,c:cycCol(leader.cycleMin)},{l:"Your payload",v:`${op.payloadT}t`,c:C.muted},{l:"Leader payload",v:`${leader.payloadT}t`,c:C.muted}]
-                      :[{l:"Your bucket",v:`${op.avgBucketT}t`,c:C.muted},{l:"Leader bucket",v:`${leader.avgBucketT}t`,c:C.muted},{l:"Your cycle",v:`${op.cycleMin}min`,c:C.muted},{l:"Leader cycle",v:`${leader.cycleMin}min`,c:C.muted}]
-                    ).map(x=><div key={x.l} style={{background:C.card,borderRadius:7,padding:"7px 9px",border:`1px solid ${C.border}`}}><div style={{fontSize:7,color:C.muted,fontFamily:F,fontWeight:700,textTransform:"uppercase",marginBottom:2}}>{x.l}</div><div style={{fontFamily:F,fontWeight:900,fontSize:15,color:x.c}}>{x.v}</div></div>)}
-                  </div>
-                </div>}
-              </div>}
-            </div>;
-          })}
-        </div>;
-      })}
-    </div>
-  </div>;
-}
-
 // ── Maintenance Screen ────────────────────────────────────────────────────
 const MAINT_TASKS={
   grease:{id:"grease",label:"Greasing",        icon:"🪣",interval:10, unit:"SMH",color:"#f5a623",desc:"All grease points — pins, pivots, bucket linkage"},
@@ -2067,8 +1912,9 @@ function ChecksHub({allMachines,catDemo,activeMine,activeShiftId,user}){
 
 
 
-function MenuOverlay({user,onNav,onAddMachine,onVehicleCheck,onClose,allMachines,activeMine}){
+function MenuOverlay({user,onNav,onVehicleCheck,onClose,allMachines}){
   const lv=ROLES[user?.role]?.level||1;
+  const isAdmin=user?.role==="admin"||user?.role==="minemanager";
   const Section=({title,children})=><div style={{marginBottom:6}}>
     <div style={{fontSize:9,color:C.muted,fontFamily:F,fontWeight:700,letterSpacing:".12em",textTransform:"uppercase",padding:"0 20px",marginBottom:8}}>{title}</div>
     {children}
@@ -2098,36 +1944,25 @@ function MenuOverlay({user,onNav,onAddMachine,onVehicleCheck,onClose,allMachines
           <Item icon="🎟" label="Handover Tickets" sub="Open issues · machines needing attention" color={C.danger} onClick={()=>{onNav("tickets");onClose();}}/>
           <Item icon="🚨" label="Report Issue" sub="Create a new handover ticket" color={C.amber} onClick={()=>{onNav("reportIssue");onClose();}}/>
         </Section>
-        <Section title="Operations">
-          <Item icon="📡" label="Live Board" sub="All active operators · crusher feed" onClick={()=>{onNav("board");onClose();}}/>
-          {ROLES[user?.role]?.level===1&&<Item icon="🪣" label="My Operations" sub="Scoop logging · idle tracking · blast schedule" onClick={()=>{onNav("ops");onClose();}}/>}
-        </Section>
-        <Section title="Checks">
-          <Item icon="🗺" label="Workplace Exam" sub="MSHA daily inspection · required before work" color={C.danger} onClick={()=>{onNav("workplaceExam");onClose();}}/>
-          <Item icon="✅" label="Machine Check" sub="HSMP pre-start · MQSHA minimum" color={C.success} onClick={()=>{onNav("checks");onClose();}}/>
-          <Item icon="🗺" label="Site Area Check" sub="Mine Code minimum" color={C.info} onClick={()=>{onNav("checks");onClose();}}/>
-          <Item icon="🔧" label="Maintenance" sub="Grease · filter blow · VisionLink fluids" color={C.accent} onClick={()=>{onNav("checks");onClose();}}/>
-          <Item icon="⚙" label="Diagnostics" sub="Fault codes · fluids · service" color={C.amber} onClick={()=>{onNav("checks");onClose();}}/>
-          <Item icon="🧯" label="Fire Extinguishers" sub="MSHA monthly inspection · per location" color="#ec4899" onClick={()=>{onNav("fireInspect");onClose();}}/>
+
+        {lv===1&&<Section title="Quick start">
+          <Item icon="🗺" label="Workplace Exam" sub="MSHA · required before shift work" color={C.danger} onClick={()=>{onNav("workplaceExam");onClose();}}/>
+          <Item icon="🧯" label="Fire Extinguishers" sub="MSHA monthly · per location" color="#ec4899" onClick={()=>{onNav("fireInspect");onClose();}}/>
+        </Section>}
+
+        <Section title="Other">
           <Item icon="🚗" label="Vehicle Check" sub="Company truck / ute inspection" color={C.accent} onClick={()=>{onVehicleCheck();onClose();}}/>
+          {lv>=2&&<Item icon="✅" label="Checks Hub" sub="Pre-start · site area · diagnostics" color={C.success} onClick={()=>{onNav("checks");onClose();}}/>}
+          {lv>=2&&<Item icon="🧯" label="Fire Extinguishers" sub="MSHA monthly inspection" color="#ec4899" onClick={()=>{onNav("fireInspect");onClose();}}/>}
+          {lv>=2&&<Item icon="📋" label="Compliance" sub="Training · competent persons · SDS" color={C.info} onClick={()=>{onNav("comply");onClose();}}/>}
         </Section>
-        <Section title="Performance">
-          <Item icon="📋" label="Compliance" sub="Training · competent persons · SDS" color={C.info} onClick={()=>{setTab("comply");setFlow("app");onClose();}}/>
-          <Item icon="📷" label="Photo Guides" sub="Reference photos for pre-start checks" color={C.info} onClick={()=>{setFlow("photoManager");onClose();}}/>
-          <Item icon="🧠" label="Intelligence" sub="Forecast · weather · fuel · fatigue · predictive" color={C.purple} onClick={()=>{onNav("intel");onClose();}}/>
-          <Item icon="👷" label="Machine Performance" sub={`${allMachines.length} machines · ranked by t/hr`} onClick={()=>{onNav("perf");onClose();}}/>
-          <Item icon="📊" label="Shift Scoring" sub="Score = t/hr ÷ crusher cap × 1000" onClick={()=>{onNav("scoring");onClose();}}/>
-        </Section>
-        <Section title="Admin">
-          {(user?.role==="admin"||user?.role==="minemanager")&&<Item icon="⚙" label="Settings" sub="Plants · mine setup" onClick={()=>{onNav("settings");onClose();}}/>}
-        </Section>
-        <Section title="Fleet">
-          <Item icon="🚛" label="Add Machine" sub="Add new equipment to the fleet" color={C.purple} onClick={()=>{onAddMachine();onClose();}}/>
-          <Item icon="🔍" label="All Machines" sub={`${allMachines.length} in fleet · tap to view diagnostics`} onClick={()=>{onNav("checks");onClose();}}/>
-          <div style={{padding:"8px 20px 0"}}><VisionLinkSyncButton activeMine={activeMine}/></div>
-        </Section>
+
+        {isAdmin&&<Section title="Admin">
+          <Item icon="⚙" label="Setup" sub="Plants · areas · locations · fleet · integrations" onClick={()=>{onNav("setup");onClose();}}/>
+        </Section>}
+
         <div style={{padding:"16px 20px",marginTop:4}}>
-          <div style={{fontSize:11,color:C.muted,textAlign:"center",lineHeight:1.5}}>MineOps · Demo Mode<br/>CAT VisionLink · MQSHA 1999 / Reg 2017</div>
+          <div style={{fontSize:11,color:C.muted,textAlign:"center",lineHeight:1.5}}>MineOps · {allMachines?.length||0} machine{(allMachines?.length||0)!==1?"s":""}<br/>MSHA 30 CFR Part 56 · CAT VisionLink AEMP 2.0</div>
         </div>
       </div>
     </div>
@@ -2250,25 +2085,6 @@ function PlantPicker({activeMine,user,value,onChange}){
         <div style={{color:C.accent,fontSize:12,fontFamily:F,fontWeight:700}}>{current?"Change":"Pick"} ›</div>
       </div>
     }
-  </div>;
-}
-// ── Settings Hub ──────────────────────────────────────────────────────────
-function SettingsScreen({onClose,onNavPlants,onNavWorkplaceAreas,onNavExtinguisherLocations}){
-  const Row=({icon,title,sub,onClick})=><div onClick={onClick} style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:12,padding:"15px 16px",marginBottom:10,cursor:"pointer",display:"flex",alignItems:"center",gap:14}}>
-    <span style={{fontSize:24,width:32,textAlign:"center"}}>{icon}</span>
-    <div style={{flex:1}}>
-      <div style={{fontFamily:F,fontWeight:700,fontSize:15,color:C.text}}>{title}</div>
-      <div style={{fontSize:11,color:C.muted,marginTop:2}}>{sub}</div>
-    </div>
-    <span style={{color:C.muted,fontSize:14}}>›</span>
-  </div>;
-  return <div style={{paddingBottom:60}}>
-    <PageHdr title="Settings" sub="Mine setup · admin only" back onBack={onClose}/>
-    <div style={{padding:"14px 16px"}}>
-      <Row icon="🏭" title="Plants"                  sub="Processing lines · crusher + screens + conveyors" onClick={onNavPlants}/>
-      <Row icon="🗺"  title="Workplace Areas"        sub="MSHA exam areas · pit benches · crusher · roads"  onClick={onNavWorkplaceAreas}/>
-      <Row icon="🧯" title="Extinguisher Locations" sub="Places that have extinguishers · for monthly checks" onClick={onNavExtinguisherLocations}/>
-    </div>
   </div>;
 }
 // ── Photo Upload Helper ───────────────────────────────────────────────────
@@ -3131,48 +2947,6 @@ function VisionLinkSetup({onComplete,onSkip,activeMine}){
 }
 
 // ── Photo Manager (admin/supervisor uploads reference photos) ─────────────
-function PhotoManagerScreen(){
-  const[selMachine,setSelMachine]=useState(null);const[selCheck,setSelCheck]=useState(null);
-  const[viewPhoto,setViewPhoto]=useState(null);
-  const machineTypes=[{type:"Wheel Loader",key:"loader"},{type:"Excavator",key:"loader"},{type:"Haul Truck",key:"truck"}];
-  const hasPhoto=(type,checkId)=>{const k=type==="Haul Truck"?"truck":"loader";return !!(PHOTO_GUIDES[k]?.[checkId]);};
-  const totalItems=PRESTART.length,totalMachineTypes=[...new Set(BASE_MACHINES.map(m=>m.type))].filter(t=>t!=="Dozer").length;
-  const coveredItems=PRESTART.filter(c=>hasPhoto("Wheel Loader",c.id)).length;
-  return <div style={{paddingBottom:80}} className="up">
-    <PageHdr title="Photo Guides" sub="Reference photos for pre-start checks"/>
-    <div style={{padding:"12px 15px"}}>
-      <div style={{background:`${C.success}08`,border:`1px solid ${C.success}22`,borderRadius:12,padding:"12px 14px",marginBottom:14}}>
-        <div style={{fontFamily:F,fontWeight:700,fontSize:13,color:C.success,marginBottom:6}}>📷 {coveredItems}/{totalItems} check items have reference photos</div>
-        <div style={{fontSize:11,color:C.muted,lineHeight:1.5}}>Operators see a 📷 button next to items that have photos during pre-start. Tap it to see the reference image and caption. Upload photos for each machine type below.</div>
-      </div>
-      {viewPhoto&&<PhotoViewer guide={viewPhoto.checkId} machineType={viewPhoto.type} onClose={()=>setViewPhoto(null)}/>}
-      {[...new Set(BASE_MACHINES.filter(m=>m.type!=="Dozer").map(m=>m.type))].map(mtype=>{
-        const key=mtype==="Haul Truck"?"truck":"loader";
-        const covered=PRESTART.filter(c=>hasPhoto(mtype,c.id)).length;
-        return <div key={mtype} style={{marginBottom:16}}>
-          <div style={{fontFamily:F,fontWeight:700,fontSize:12,color:C.muted,letterSpacing:".08em",textTransform:"uppercase",marginBottom:8}}>{mtype} · {covered}/{PRESTART.length} photos</div>
-          <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:12,overflow:"hidden"}}>
-            {PRESTART.map((c,i)=>{
-              const has=hasPhoto(mtype,c.id);
-              return <div key={c.id} style={{display:"flex",alignItems:"center",gap:12,padding:"11px 14px",borderBottom:i<PRESTART.length-1?`1px solid ${C.border}22`:"none"}}>
-                <div style={{fontSize:15,flexShrink:0}}>{has?"📷":"⬜"}</div>
-                <div style={{flex:1}}><div style={{fontSize:13,color:C.text}}>{c.label}</div>{has&&<div style={{fontSize:10,color:C.success,marginTop:1}}>Photo guide set · tap to preview</div>}</div>
-                {has
-                  ?<button onClick={()=>setViewPhoto({checkId:c.id,type:mtype})} style={{background:`${C.success}15`,border:`1px solid ${C.success}33`,borderRadius:7,padding:"5px 10px",color:C.success,fontSize:11,fontFamily:F,fontWeight:700,cursor:"pointer"}}>Preview</button>
-                  :<button style={{background:`${C.accent}15`,border:`1px solid ${C.accent}33`,borderRadius:7,padding:"5px 10px",color:C.accent,fontSize:11,fontFamily:F,fontWeight:700,cursor:"pointer"}}>+ Upload</button>}
-              </div>;
-            })}
-          </div>
-        </div>;
-      })}
-      <div style={{background:`${C.info}08`,border:`1px solid ${C.info}22`,borderRadius:10,padding:"10px 13px",marginTop:4}}>
-        <div style={{fontFamily:F,fontWeight:700,fontSize:11,color:C.info,marginBottom:4}}>In production</div>
-        <div style={{fontSize:11,color:C.muted,lineHeight:1.5}}>Photos are uploaded via this screen and stored in Supabase Storage under your mine_id. Only Mine Admin and Supervisors can upload or replace photos. All operators across all shifts see the same reference photos.</div>
-      </div>
-    </div>
-  </div>;
-}
-
 // ── Compliance Hub ────────────────────────────────────────────────────────────
 // Training records, competent persons list, SDS library, induction forms.
 // In production: files stored in Supabase Storage, records in DB.
@@ -3302,8 +3076,7 @@ function ComplianceHub(){
           <Pill label="VERIFIED" color={C.success}/>
         </div>)}
         {!t.photo&&<div style={{background:`${C.amber}10`,border:`1px solid ${C.amber}33`,borderRadius:10,padding:"10px 12px",marginTop:10}}>
-          <div style={{fontFamily:F,fontWeight:700,fontSize:12,color:C.amber,marginBottom:4}}>⚠ No training photo on file</div>
-          <button style={{background:`${C.amber}18`,border:`1px solid ${C.amber}44`,borderRadius:8,padding:"8px 12px",color:C.amber,fontSize:12,fontFamily:F,fontWeight:700,cursor:"pointer"}}>📷 Upload Certificate Photo</button>
+          <div style={{fontFamily:F,fontWeight:700,fontSize:12,color:C.amber}}>⚠ No training photo on file</div>
         </div>}
         {t.photo&&<div style={{background:`${C.success}08`,border:`1px solid ${C.success}22`,borderRadius:10,padding:"10px 12px",marginTop:10}}>
           <div style={{fontFamily:F,fontWeight:700,fontSize:12,color:C.success,marginBottom:6}}>📷 Training photo on file</div>
@@ -3335,12 +3108,9 @@ function ComplianceHub(){
           </div>
           <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
             <div style={{fontSize:10,color:C.muted}}>Revised: {s.revised}</div>
-            {s.uploaded
-              ?<button style={{background:`${C.success}15`,border:`1px solid ${C.success}33`,borderRadius:7,padding:"5px 11px",color:C.success,fontSize:11,fontFamily:F,fontWeight:700,cursor:"pointer"}}>📄 View SDS</button>
-              :<button style={{background:`${C.accent}15`,border:`1px solid ${C.accent}33`,borderRadius:7,padding:"5px 11px",color:C.accent,fontSize:11,fontFamily:F,fontWeight:700,cursor:"pointer"}}>⬆ Upload SDS</button>}
+            <span style={{background:s.uploaded?`${C.success}15`:`${C.amber}15`,border:`1px solid ${s.uploaded?C.success:C.amber}33`,borderRadius:7,padding:"4px 10px",color:s.uploaded?C.success:C.amber,fontSize:11,fontFamily:F,fontWeight:700}}>{s.uploaded?"📄 On file":"⚠ Not uploaded"}</span>
           </div>
         </div>;})}
-        <button style={{width:"100%",background:C.card,border:`1px solid ${C.accent}33`,borderRadius:12,padding:"13px",marginTop:6,color:C.accent,fontFamily:F,fontWeight:700,fontSize:14,cursor:"pointer"}}>+ Add New Substance</button>
       </div>
     </div>;}
 
@@ -3359,12 +3129,11 @@ function ComplianceHub(){
             <div><div style={{fontFamily:F,fontWeight:900,fontSize:16}}>{c.name}</div><div style={{fontSize:11,color:C.muted}}>{c.role}</div></div>
             <span style={{background:`${ec}20`,color:ec,border:`1px solid ${ec}44`,borderRadius:6,padding:"2px 8px",fontSize:10,fontFamily:F,fontWeight:700,flexShrink:0}}>{expiryLabel(c.status)}</span>
           </div>
-          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-            <div><div style={{fontSize:12,color:C.textSub,marginBottom:2}}>📄 {c.cert}</div><div style={{fontSize:10,color:C.muted}}>Expires: {c.expiry}</div></div>
-            <button style={{background:`${C.success}15`,border:`1px solid ${C.success}33`,borderRadius:7,padding:"5px 10px",color:C.success,fontSize:11,fontFamily:F,fontWeight:700,cursor:"pointer"}}>View</button>
+          <div>
+            <div style={{fontSize:12,color:C.textSub,marginBottom:2}}>📄 {c.cert}</div>
+            <div style={{fontSize:10,color:C.muted}}>Expires: {c.expiry}</div>
           </div>
         </div>;})}
-        <button style={{width:"100%",background:C.card,border:`1px solid ${C.accent}33`,borderRadius:12,padding:"13px",marginTop:6,color:C.accent,fontFamily:F,fontWeight:700,fontSize:14,cursor:"pointer"}}>+ Add Competent Person</button>
       </div>
     </div>;}
 
@@ -3426,12 +3195,6 @@ async function uploadExtinguisherPhoto(file,mineId,scopeId){
   if(error){console.error("ext photo upload:",error);return null;}
   return path;
 }
-async function getExtinguisherPhotoUrl(path){
-  if(!path)return null;
-  const{data}=await supabase.storage.from("fire-extinguishers").createSignedUrl(path,3600);
-  return data?.signedUrl||null;
-}
-
 // ── Records Hub ───────────────────────────────────────────────────────────
 // Mine-wide read-only archive across 6 record types. Filter chips, date
 // range, operator search. Tap a row to expand its full detail in-place.
@@ -4173,9 +3936,308 @@ function FireExtinguisherInspectScreen({activeMine,user,onBack}){
   </div>;
 }
 
+// ── Today Screen ──────────────────────────────────────────────────────────
+// Operator landing page. Surfaces required-today actions (workplace exam,
+// pre-start, end-shift), shows machine status, plus quick links for the
+// most common shift actions. Only operators see this.
+
+function TodayScreen({user,activeMine,activeShiftId,allMachines,onGoChecks,onGoProduction,onGoRecords,onReportIssue,onVehicleCheck,onWorkplaceExam}){
+  const machine=(allMachines||[]).find(m=>m.id===user?.machine)
+              ||BASE_MACHINES.find(m=>m.id===user?.machine);
+  const crusher=OP.crushers.find(c=>c.id===(machine?.crusher_assigned||machine?.crusherAssigned||user?.crusherAssigned));
+  const cat=CAT_DEMO[user?.machine];
+
+  const[examDone,setExamDone]=useState(null);   // null = unknown / loading
+  const[prestartDone,setPrestartDone]=useState(null);
+  const[tonnesLogged,setTonnesLogged]=useState(null);
+  const[loading,setLoading]=useState(true);
+
+  useEffect(()=>{
+    if(!activeMine?.id){
+      // Demo mode — show optimistic defaults so the screen is testable.
+      setExamDone(false);setPrestartDone(false);setTonnesLogged(null);setLoading(false);
+      return;
+    }
+    let cancelled=false;
+    (async()=>{
+      setLoading(true);
+      try{
+        const startIso=`${_today()}T00:00:00`;
+        const[exam,ps,dp]=await Promise.all([
+          supabase.from("workplace_exams").select("id").eq("mine_id",activeMine.id).eq("operator_id",user?.id||"_").gte("created_at",startIso).limit(1),
+          user?.machine?supabase.from("prestart_logs").select("id,fuel_level,signed_off_at").eq("mine_id",activeMine.id).eq("operator_id",user?.id||"_").eq("machine_id",user.machine).gte("signed_off_at",startIso).order("signed_off_at",{ascending:false}).limit(1):Promise.resolve({data:[]}),
+          activeShiftId?supabase.from("daily_production").select("tonnage").eq("shift_id",activeShiftId).maybeSingle():Promise.resolve({data:null}),
+        ]);
+        if(cancelled)return;
+        setExamDone((exam?.data?.length||0)>0);
+        setPrestartDone((ps?.data?.length||0)>0);
+        setTonnesLogged(dp?.data?.tonnage??null);
+      }catch(e){console.error("today load:",e);}
+      finally{if(!cancelled)setLoading(false);}
+    })();
+    return()=>{cancelled=true;};
+  },[activeMine?.id,user?.id,user?.machine,activeShiftId]);
+
+  // Action item — three states: pending (red), done (green), no-machine (muted)
+  const ActionItem=({icon,title,sub,state,cta,onClick,disabled})=>{
+    const color=state==="done"?C.success:state==="pending"?C.danger:C.muted;
+    const bg=state==="done"?`${C.success}10`:state==="pending"?`${C.danger}10`:C.card;
+    const border=state==="done"?`${C.success}55`:state==="pending"?`${C.danger}55`:C.border;
+    return<button onClick={onClick} disabled={disabled} style={{width:"100%",background:bg,border:`1px solid ${border}`,borderLeft:`4px solid ${color}`,borderRadius:12,padding:"14px 15px",display:"flex",alignItems:"center",gap:12,cursor:disabled?"default":"pointer",textAlign:"left",marginBottom:8,opacity:disabled?0.6:1}}>
+      <span style={{fontSize:24,flexShrink:0}}>{icon}</span>
+      <div style={{flex:1,minWidth:0}}>
+        <div style={{fontFamily:F,fontWeight:900,fontSize:14,color:C.text}}>{title}</div>
+        <div style={{fontSize:11,color:state==="pending"?color:C.muted,marginTop:2,fontFamily:F,fontWeight:state==="pending"?700:400}}>{sub}</div>
+      </div>
+      {!disabled&&cta&&<span style={{background:state==="done"?"transparent":`${color}22`,border:state==="done"?"none":`1px solid ${color}55`,borderRadius:8,padding:state==="done"?"0":"6px 12px",color:color,fontFamily:F,fontWeight:700,fontSize:11,flexShrink:0,whiteSpace:"nowrap"}}>{state==="done"?"✓":cta}</span>}
+    </button>;
+  };
+
+  const QuickAction=({icon,label,color,onClick})=>(
+    <button onClick={onClick} style={{flex:"1 1 calc(50% - 4px)",background:C.card,border:`1px solid ${color}33`,borderRadius:11,padding:"14px 10px",display:"flex",flexDirection:"column",alignItems:"center",gap:6,cursor:"pointer",minHeight:78}}>
+      <span style={{fontSize:24}}>{icon}</span>
+      <span style={{fontFamily:F,fontWeight:700,fontSize:11,color,textAlign:"center"}}>{label}</span>
+    </button>
+  );
+
+  const greeting=(()=>{
+    const h=new Date().getHours();
+    if(h<12)return"Good morning";
+    if(h<18)return"Good afternoon";
+    return"Good evening";
+  })();
+
+  const remaining=[examDone===false,prestartDone===false,activeShiftId&&tonnesLogged==null].filter(Boolean).length;
+
+  return<div style={{paddingBottom:80}} className="up">
+    {/* Greeting header */}
+    <div style={{background:`linear-gradient(160deg,${C.accent}18,${C.bg} 70%)`,borderBottom:`1px solid ${C.border}`,padding:"16px 16px 14px"}}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
+        <div style={{flex:1,minWidth:0}}>
+          <div style={{fontSize:11,color:C.muted,letterSpacing:".1em",textTransform:"uppercase",fontFamily:F,fontWeight:700}}>{greeting}</div>
+          <div style={{fontFamily:F,fontWeight:900,fontSize:22,color:C.text,marginTop:2,lineHeight:1.15}}>{user?.name||"Operator"}</div>
+          <div style={{fontSize:12,color:C.muted,marginTop:3}}>
+            {machine?.model||"No machine assigned"}{crusher?` · ${crusher.name}`:""}
+          </div>
+        </div>
+        {!loading&&<div style={{textAlign:"right",flexShrink:0,marginLeft:12}}>
+          <div style={{fontSize:10,color:C.muted,fontFamily:F,fontWeight:700,letterSpacing:".06em",textTransform:"uppercase"}}>Required</div>
+          <div style={{fontFamily:F,fontWeight:900,fontSize:22,color:remaining===0?C.success:C.danger,lineHeight:1}}>{remaining===0?"✓":remaining}</div>
+        </div>}
+      </div>
+    </div>
+
+    <div style={{padding:"14px 16px"}}>
+      {/* Required-today section */}
+      <div style={{fontSize:10,color:C.muted,fontFamily:F,fontWeight:700,letterSpacing:".1em",textTransform:"uppercase",marginBottom:8,paddingLeft:4}}>Today's checklist</div>
+
+      <ActionItem
+        icon="🗺"
+        title="Workplace Exam"
+        sub={examDone?"Done today":examDone===false?"Required before shift work · MSHA":"Checking…"}
+        state={examDone?"done":examDone===false?"pending":"loading"}
+        cta="Do now →"
+        onClick={onWorkplaceExam}
+      />
+
+      <ActionItem
+        icon="✅"
+        title="Pre-start Check"
+        sub={!user?.machine?"No machine assigned":prestartDone?`Signed off · ${machine?.model||""}`:"Required before operating · HSMP"}
+        state={!user?.machine?"muted":prestartDone?"done":"pending"}
+        cta="Do now →"
+        onClick={onGoChecks}
+        disabled={!user?.machine}
+      />
+
+      {activeShiftId&&<ActionItem
+        icon="🪣"
+        title="End-of-shift Tonnage"
+        sub={tonnesLogged!=null?`${Number(tonnesLogged).toLocaleString()} t logged today`:"Log when shift wraps · daily production"}
+        state={tonnesLogged!=null?"done":"pending"}
+        cta="Log →"
+        onClick={onGoProduction}
+      />}
+
+      {/* Machine status (demo only — real machines may not have CAT_DEMO data) */}
+      {cat&&<>
+        <div style={{fontSize:10,color:C.muted,fontFamily:F,fontWeight:700,letterSpacing:".1em",textTransform:"uppercase",margin:"18px 4px 8px"}}>My machine</div>
+        <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:12,padding:"13px 14px",marginBottom:14}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:10}}>
+            <div>
+              <div style={{fontFamily:F,fontWeight:900,fontSize:15,color:C.text}}>{machine?.model}</div>
+              <div style={{fontSize:10,color:C.muted,marginTop:2}}>SMH {cat.smh?.toLocaleString()||"—"} · {machine?.type}</div>
+            </div>
+            <Pill label={(cat.status||"—").toUpperCase()} color={STATUS_COL[cat.status]||C.muted}/>
+          </div>
+          <div style={{display:"flex",gap:6}}>
+            <Stat label="Fuel" value={`${cat.fuel??"—"}%`} color={cat.fuel>=30?C.success:C.amber} small/>
+            <Stat label="Engine" value={cat.engineTemp?`${cat.engineTemp}°C`:"—"} color={cat.engineTemp&&cat.engineTemp<95?C.success:C.amber} small/>
+            <Stat label="Util" value={`${cat.utilToday??0}%`} color={C.info} small/>
+          </div>
+          {(cat.faults?.length||0)>0&&<div style={{marginTop:10,padding:"8px 10px",background:`${C.danger}10`,border:`1px solid ${C.danger}33`,borderRadius:8}}>
+            {cat.faults.map((f,i)=><div key={i} style={{display:"flex",gap:8,alignItems:"flex-start",fontSize:11}}>
+              <span style={{fontFamily:F,fontWeight:900,color:f.sev==="high"?C.danger:C.amber,flexShrink:0}}>{f.code}</span>
+              <span style={{color:C.textSub,lineHeight:1.4}}>{f.desc}</span>
+            </div>)}
+          </div>}
+        </div>
+      </>}
+
+      {/* Quick actions */}
+      <div style={{fontSize:10,color:C.muted,fontFamily:F,fontWeight:700,letterSpacing:".1em",textTransform:"uppercase",margin:"4px 4px 8px"}}>Quick actions</div>
+      <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+        <QuickAction icon="🚨" label="Report Issue"   color={C.danger}  onClick={onReportIssue}/>
+        <QuickAction icon="🚗" label="Vehicle Check"  color={C.accent}  onClick={onVehicleCheck}/>
+        <QuickAction icon="📈" label="My Production"  color={C.info}    onClick={onGoProduction}/>
+        <QuickAction icon="📁" label="Records"        color={C.purple}  onClick={onGoRecords}/>
+      </div>
+
+      {!activeShiftId&&<div style={{marginTop:14,background:`${C.info}10`,border:`1px solid ${C.info}33`,borderRadius:10,padding:"10px 12px",fontSize:11,color:C.textSub,lineHeight:1.5}}>
+        <div style={{color:C.info,fontFamily:F,fontWeight:700,fontSize:10,letterSpacing:".06em",textTransform:"uppercase",marginBottom:3}}>No active shift</div>
+        Sign back in from the app entry to open a new shift and unlock end-of-shift tonnage logging.
+      </div>}
+    </div>
+  </div>;
+}
+// ── Today's Operator Rankings (header section of Team tab) ────────────────
+// Loads daily_production rows for today, joins to operators via map,
+// renders a compact leaderboard. No data → friendly empty state.
+function TodayLeaderboard({activeMine,remoteOperators}){
+  const[rows,setRows]=useState([]);
+  const[loading,setLoading]=useState(true);
+  useEffect(()=>{
+    if(!activeMine?.id){
+      // Demo mode: synthesize from LIVE_OPS
+      const demo=USERS.filter(u=>u.role==="operator"&&LIVE_OPS[u.id]).map(u=>{
+        const liveTph=LIVE_OPS[u.id]?.tph||120;
+        const tonnage=Math.round(liveTph*(0.5+Math.random()*4));
+        return{operatorId:u.id,name:u.name,tonnage,machineId:u.machine};
+      }).sort((a,b)=>b.tonnage-a.tonnage);
+      setRows(demo);setLoading(false);
+      return;
+    }
+    let cancelled=false;
+    (async()=>{
+      try{
+        const{data,error}=await supabase.from("daily_production")
+          .select("operator_id,machine_id,tonnage")
+          .eq("mine_id",activeMine.id)
+          .eq("date",_today());
+        if(error)throw error;
+        const opMap=new Map((remoteOperators||[]).map(o=>[o.id,o.name]));
+        const totals=new Map();
+        for(const r of data||[]){
+          const k=r.operator_id;
+          if(!totals.has(k))totals.set(k,{operatorId:k,name:opMap.get(k)||"Operator",tonnage:0,machineId:r.machine_id});
+          totals.get(k).tonnage+=Number(r.tonnage||0);
+        }
+        if(!cancelled){
+          setRows([...totals.values()].sort((a,b)=>b.tonnage-a.tonnage));
+        }
+      }catch(e){console.error("today leaderboard:",e);}
+      finally{if(!cancelled)setLoading(false);}
+    })();
+    return()=>{cancelled=true;};
+  },[activeMine?.id,(remoteOperators||[]).length]);
+
+  const total=rows.reduce((a,r)=>a+r.tonnage,0);
+
+  if(loading)return <div style={{padding:"20px 14px",color:C.muted,fontSize:12,textAlign:"center"}}>Loading today's rankings…</div>;
+  if(rows.length===0){
+    return<div style={{background:`${C.info}08`,border:`1px solid ${C.info}22`,borderRadius:12,padding:"14px",marginBottom:12,fontSize:12,color:C.textSub,lineHeight:1.5}}>
+      <div style={{color:C.info,fontFamily:F,fontWeight:700,fontSize:10,letterSpacing:".06em",textTransform:"uppercase",marginBottom:3}}>Today's rankings</div>
+      No operators have logged today's tonnage yet. Rankings update as operators end shifts.
+    </div>;
+  }
+
+  return<div style={{marginBottom:14}}>
+    <div style={{display:"flex",alignItems:"baseline",justifyContent:"space-between",padding:"0 4px 6px"}}>
+      <div style={{fontSize:10,color:C.muted,fontFamily:F,fontWeight:700,letterSpacing:".1em",textTransform:"uppercase"}}>Today's rankings</div>
+      <div style={{fontSize:11,color:C.muted}}>Total: <b style={{color:C.accent}}>{total.toLocaleString()} t</b></div>
+    </div>
+    {rows.slice(0,8).map((r,i)=>{
+      const pct=total>0?Math.round((r.tonnage/total)*100):0;
+      const col=i===0?C.accent:i===1?C.info:i===2?C.success:C.muted;
+      const avatar=(r.name||"?").split(" ").map(p=>p[0]).join("").slice(0,2).toUpperCase();
+      return<div key={r.operatorId} style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:10,padding:"10px 12px",marginBottom:6,display:"flex",alignItems:"center",gap:11}}>
+        <div style={{fontFamily:F,fontWeight:900,fontSize:14,width:22,textAlign:"center",color:col}}>#{i+1}</div>
+        <div style={{width:30,height:30,borderRadius:"50%",background:`${col}22`,border:`1.5px solid ${col}55`,display:"flex",alignItems:"center",justifyContent:"center",fontFamily:F,fontWeight:700,fontSize:11,color:col,flexShrink:0}}>{avatar}</div>
+        <div style={{flex:1,minWidth:0}}>
+          <div style={{fontFamily:F,fontWeight:700,fontSize:13,color:C.text,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{r.name}</div>
+          <div style={{height:4,background:C.border,borderRadius:99,marginTop:4,overflow:"hidden"}}>
+            <div style={{width:`${pct}%`,height:"100%",background:col,borderRadius:99}}/>
+          </div>
+        </div>
+        <div style={{textAlign:"right",flexShrink:0}}>
+          <div style={{fontFamily:F,fontWeight:900,fontSize:15,color:col,lineHeight:1}}>{r.tonnage.toLocaleString()}<span style={{fontSize:10,color:C.muted,fontWeight:400}}> t</span></div>
+        </div>
+      </div>;
+    })}
+    {rows.length>8&&<div style={{fontSize:11,color:C.muted,textAlign:"center",padding:"4px 0"}}>+{rows.length-8} more</div>}
+  </div>;
+}
+// ── Setup Hub ─────────────────────────────────────────────────────────────
+// Admin / MineManager only. Single place for all mine-setup work — replaces
+// the old SettingsScreen and consolidates Add Machine + VisionLink Sync that
+// used to live as scattered menu items.
+
+function SetupHub({user,activeMine,allMachines,onClose,onNavPlants,onNavWorkplaceAreas,onNavExtinguisherLocations,onAddMachine,onPreshiftHistory}){
+  const Row=({icon,title,sub,onClick,color=C.text,right})=><button onClick={onClick} style={{width:"100%",background:C.card,border:`1px solid ${C.border}`,borderRadius:12,padding:"14px 15px",marginBottom:8,cursor:"pointer",display:"flex",alignItems:"center",gap:13,textAlign:"left"}}>
+    <span style={{fontSize:22,width:30,textAlign:"center",flexShrink:0}}>{icon}</span>
+    <div style={{flex:1,minWidth:0}}>
+      <div style={{fontFamily:F,fontWeight:700,fontSize:14,color}}>{title}</div>
+      <div style={{fontSize:11,color:C.muted,marginTop:2,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{sub}</div>
+    </div>
+    {right||<span style={{color:C.muted,fontSize:14,flexShrink:0}}>›</span>}
+  </button>;
+  const SectionLabel=({label})=><div style={{fontSize:9,color:C.muted,fontFamily:F,fontWeight:700,letterSpacing:".12em",textTransform:"uppercase",padding:"14px 4px 6px"}}>{label}</div>;
+  const machineCount=(allMachines||[]).length;
+  return<div style={{paddingBottom:80}}>
+    <PageHdr title="Setup" sub={`Mine configuration · ${activeMine?.name||"demo"} · ${ROLES[user?.role]?.label||"admin"}`} back onBack={onClose}/>
+    <div style={{padding:"4px 16px 14px"}}>
+      <SectionLabel label="Areas & locations"/>
+      <Row icon="🗺"  title="Workplace Areas"        sub="MSHA exam areas · pit benches · crusher · roads"     onClick={onNavWorkplaceAreas}/>
+      <Row icon="🧯" title="Extinguisher Locations" sub="Places that have extinguishers · for monthly checks"  onClick={onNavExtinguisherLocations}/>
+      <Row icon="🏭" title="Plants"                  sub="Processing lines · crusher + screens + conveyors"    onClick={onNavPlants}/>
+
+      <SectionLabel label="Fleet"/>
+      <Row icon="🚛" title="Add Machine"             sub={`${machineCount} machine${machineCount!==1?"s":""} in fleet · add new equipment`} onClick={onAddMachine}/>
+      <Row icon="📋" title="Pre-shift History"       sub="All operator pre-start sign-offs · audit trail"      onClick={onPreshiftHistory}/>
+
+      <SectionLabel label="Integrations"/>
+      <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:12,padding:"14px 15px",marginBottom:8}}>
+        <div style={{display:"flex",alignItems:"center",gap:13,marginBottom:10}}>
+          <span style={{fontSize:22,width:30,textAlign:"center"}}>📡</span>
+          <div style={{flex:1}}>
+            <div style={{fontFamily:F,fontWeight:700,fontSize:14,color:C.text}}>CAT VisionLink</div>
+            <div style={{fontSize:11,color:C.muted,marginTop:2}}>Fleet telemetry · cycle times · fluids</div>
+          </div>
+        </div>
+        <VisionLinkSyncButton activeMine={activeMine}/>
+      </div>
+    </div>
+  </div>;
+}
+
 function Nav({active,set,role}){
   const lv=ROLES[role]?.level||1;
-  const tabs=[{id:"board",icon:"📡",label:"Live"},{id:"ops",icon:"📈",label:"Production"},{id:"checks",icon:"✅",label:"Checks"},{id:"records",icon:"📁",label:"Records"},{id:"perf",icon:"👷",label:"Performance"},{id:"intel",icon:"🧠",label:"Intel"},{id:"comply",icon:"📋",label:"Comply",mgr:true},{id:"scoring",icon:"📊",label:"Rankings",mgr:true}].filter(t=>(!t.op||lv===1)&&(!t.mgr||lv>=2));
+  // Operators (lv 1): focused 4-tab shift workflow.
+  // Supervisor / MineManager (lv 2+): mine-wide view.
+  const tabs=lv===1
+    ?[
+      {id:"today",   icon:"🏠",label:"Today"},
+      {id:"checks",  icon:"✅",label:"Checks"},
+      {id:"ops",     icon:"📈",label:"Production"},
+      {id:"records", icon:"📁",label:"Records"},
+     ]
+    :[
+      {id:"board",   icon:"📡",label:"Live"},
+      {id:"ops",     icon:"📈",label:"Production"},
+      {id:"perf",    icon:"👷",label:"Team"},
+      {id:"records", icon:"📁",label:"Records"},
+      {id:"intel",   icon:"🧠",label:"Intel"},
+     ];
   return <div style={{position:"fixed",bottom:0,left:"50%",transform:"translateX(-50%)",width:"100%",maxWidth:420,background:`${C.surface}f5`,backdropFilter:"blur(12px)",borderTop:`1px solid ${C.border}`,display:"flex",zIndex:100}}>
     {tabs.map(t=><button key={t.id} onClick={()=>set(t.id)} style={{flex:1,padding:"9px 0",background:"none",border:"none",color:active===t.id?C.accent:C.muted,display:"flex",flexDirection:"column",alignItems:"center",gap:2,fontSize:active===t.id?10:9,fontFamily:F,fontWeight:active===t.id?700:400,cursor:"pointer",borderTop:active===t.id?`2px solid ${C.accent}`:"2px solid transparent"}}>
       <span style={{fontSize:17}}>{t.icon}</span>{t.label}
@@ -4647,6 +4709,16 @@ function MineOpsApp() {
     :[...BASE_MACHINES,...customMachines]
   const catDemo=[...Object.entries(CAT_DEMO).map(([id,data])=>({id,meta:BASE_MACHINES.find(m=>m.id===id),data})),...customCatData]
   const lv=ROLES[user?.role]?.level||1
+  // When the user/role becomes known, snap to the right home tab if the
+  // current tab isn't one this role can see.
+  useEffect(()=>{
+    if(!user)return;
+    const op=["today","checks","ops","records"];
+    const mgr=["board","ops","perf","records","intel","comply"];
+    const valid=lv===1?op:mgr;
+    if(!valid.includes(tab))setTab(lv===1?"today":"board");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  },[user?.role])
   const handleLogin=()=>{ /* session is already set by AuthProvider; loadProfile effect handles the rest */ }
   const ensureShift=async(truckDriven)=>{
     if(!user?.id||!activeMine?.id||activeShiftId)return activeShiftId;
@@ -4683,30 +4755,25 @@ function MineOpsApp() {
       }catch(e){console.error("persist machine failed:",e);}
     }
   }
-  const handleSignOut=async()=>{await supabase.auth.signOut();setUser(null);setActiveMine(null);setRemoteMachines(null);setRemoteOperators(null);setActiveShiftId(null);setFlow("onboarding");setTab("board");setShowSignOut(false);setMenuOpen(false);}
+  const handleSignOut=async()=>{await supabase.auth.signOut();setUser(null);setActiveMine(null);setRemoteMachines(null);setRemoteOperators(null);setActiveShiftId(null);setFlow("onboarding");setTab("today");setShowSignOut(false);setMenuOpen(false);}
+  const homeTab=lv===1?"today":"board";
   const screen=()=>{
     if(flow==="vehicleCheck")return <TruckCheckScreen onComplete={()=>setFlow("app")}/>
-    if(flow==="addMachine")return <AddMachineScreen allMachines={allMachines} onAdd={handleAddMachine} onBack={()=>setFlow("app")}/>
-    if(flow==="photoManager")return <PhotoManagerScreen/>
-    if(flow==="inspHistory")return <PreshiftHistoryScreen mineId={activeMine?.id} onBack={()=>setFlow("app")}/>
-    if(flow==="settings")return <SettingsScreen onClose={()=>setFlow("app")} onNavPlants={()=>setFlow("plants")} onNavWorkplaceAreas={()=>setFlow("workplaceAreas")}/>
-    if(flow==="reportIssue")return <CreateTicketScreen activeMine={activeMine} activeShiftId={activeShiftId} user={user} allMachines={allMachines} defaultMachineId={user?.machine} onDone={()=>setFlow("tickets")} onBack={()=>setFlow("app")}/>
-    if(flow==="tickets")return <HandoverTicketsScreen activeMine={activeMine} user={user} allMachines={allMachines} onCreate={()=>setFlow("reportIssue")} onSelect={t=>{window.__currentTicketId=t.id;setFlow("ticketDetail");}} onBack={()=>setFlow("app")}/>
-    if(flow==="ticketDetail")return <TicketDetailScreen ticketId={window.__currentTicketId} activeMine={activeMine} user={user} allMachines={allMachines} onBack={()=>setFlow("tickets")}/>
-    if(flow==="plants")return <PlantsAdminScreen activeMine={activeMine} onBack={()=>setFlow("settings")}/>
+    if(tab==="today")return <TodayScreen user={user} activeMine={activeMine} activeShiftId={activeShiftId} allMachines={allMachines}
+      onGoChecks={()=>setTab("checks")} onGoProduction={()=>setTab("ops")} onGoRecords={()=>setTab("records")}
+      onReportIssue={()=>setFlow("reportIssue")} onVehicleCheck={()=>setFlow("vehicleCheck")} onWorkplaceExam={()=>setFlow("workplaceExam")}/>
     if(tab==="ops")return <ProductionScreen user={user} activeMine={activeMine} activeShiftId={activeShiftId} machineId={user?.machine} role={user?.role} allMachines={allMachines} remoteOperators={remoteOperators} onShiftEnded={()=>setActiveShiftId(null)}/>
-    if(tab==="records")return <RecordsHub activeMine={activeMine} allMachines={allMachines} remoteOperators={remoteOperators} onBack={()=>setTab("board")}/>
+    if(tab==="records")return <RecordsHub activeMine={activeMine} allMachines={allMachines} remoteOperators={remoteOperators} onBack={()=>setTab(homeTab)}/>
     if(tab==="checks")return <ChecksHub allMachines={allMachines} catDemo={catDemo} activeMine={activeMine} activeShiftId={activeShiftId} user={user}/>
-    if(tab==="perf")return <MachinePerformanceScreen allMachines={allMachines} custPerfData={custPerfData}/>
+    if(tab==="perf")return <MachinePerformanceScreen allMachines={allMachines} custPerfData={custPerfData} activeMine={activeMine} remoteOperators={remoteOperators}/>
     if(tab==="intel")return <IntelligenceHub/>
     if(tab==="comply")return <ComplianceHub/>
-    if(tab==="scoring")return <ScoringHub/>
     return <LiveBoard remoteOperators={remoteOperators} remoteMachines={remoteMachines} activeMine={activeMine}/>
   }
   return <div style={{maxWidth:420,margin:"0 auto",height:"100vh",display:"flex",flexDirection:"column",background:C.bg,position:"relative",overflow:"hidden"}}>
     {showSignOut&&<SignOutConfirm onConfirm={handleSignOut} onCancel={()=>setShowSignOut(false)}/>}
-    {menuOpen&&<MenuOverlay user={user} allMachines={allMachines} activeMine={activeMine} onNav={t=>{if(t==="settings"||t==="tickets"||t==="reportIssue"||t==="ticketDetail"||t==="workplaceExam"||t==="workplaceAreas"||t==="fireInspect"||t==="extinguisherLocations"){setFlow(t);}else{setTab(t);setFlow("app");}}} onAddMachine={()=>setFlow("addMachine")} onVehicleCheck={()=>setFlow("vehicleCheck")} onInspHistory={()=>{setFlow("inspHistory");setMenuOpen(false)}} onClose={()=>setMenuOpen(false)}/>}
-    {user&&!["onboarding","createMine","joinMine","subscription","vlSetup","login","app","vehicleCheck","addMachine","photoManager","settings","plants","inspHistory","extinguisherLocations","workplaceAreas"].includes(flow)&&
+    {menuOpen&&<MenuOverlay user={user} allMachines={allMachines} activeMine={activeMine} onNav={t=>{if(["setup","tickets","reportIssue","ticketDetail","workplaceExam","workplaceAreas","fireInspect","extinguisherLocations"].includes(t)){setFlow(t);}else{setTab(t);setFlow("app");}}} onVehicleCheck={()=>setFlow("vehicleCheck")} onClose={()=>setMenuOpen(false)}/>}
+    {user&&!["onboarding","createMine","joinMine","subscription","vlSetup","login","app","vehicleCheck","addMachine","setup","plants","inspHistory","extinguisherLocations","workplaceAreas"].includes(flow)&&
       <div style={{flexShrink:0,background:`${C.surface}f2`,backdropFilter:"blur(10px)",borderBottom:`1px solid ${C.border}`,padding:"9px 15px",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
         <div style={{display:"flex",alignItems:"center",gap:10}}>
           <button onClick={()=>setMenuOpen(true)} style={{background:"none",border:`1px solid ${C.border}`,borderRadius:8,padding:"5px 10px",color:C.muted,fontSize:16,cursor:"pointer",lineHeight:1}}>☰</button>
@@ -4724,14 +4791,13 @@ function MineOpsApp() {
     {flow==="truckCheck"&&<div style={{flex:1,overflowY:"auto"}}><TruckCheckScreen onComplete={()=>setFlow(lv===1?"machines":"app")}/></div>}
     {flow==="machines"&&<div style={{flex:1,overflowY:"auto"}}><MachineSelectScreen allMachines={allMachines} catDemo={catDemo} isAdmin={user?.role==="admin"} activeMine={activeMine} activeShiftId={activeShiftId} user={user} onAddMachine={()=>setFlow("addMachine")} onComplete={()=>setFlow("app")}/></div>}
     {flow==="addMachine"&&<div style={{flex:1,overflowY:"auto"}}><AddMachineScreen allMachines={allMachines} onAdd={handleAddMachine} onBack={()=>setFlow("app")}/></div>}
-    {flow==="photoManager"&&<div style={{flex:1,overflowY:"auto"}}><PhotoManagerScreen/></div>}
-    {flow==="inspHistory"&&<div style={{flex:1,overflowY:"auto"}}><PreshiftHistoryScreen mineId={activeMine?.id} onBack={()=>setFlow("app")}/></div>}
-    {flow==="settings"&&<div style={{flex:1,overflowY:"auto"}}><SettingsScreen onClose={()=>setFlow("app")} onNavPlants={()=>setFlow("plants")} onNavWorkplaceAreas={()=>setFlow("workplaceAreas")} onNavExtinguisherLocations={()=>setFlow("extinguisherLocations")}/></div>}
-    {flow==="plants"&&<div style={{flex:1,overflowY:"auto"}}><PlantsAdminScreen activeMine={activeMine} onBack={()=>setFlow("settings")}/></div>}
-    {flow==="extinguisherLocations"&&<div style={{flex:1,overflowY:"auto"}}><ExtinguisherLocationsAdminScreen activeMine={activeMine} onBack={()=>setFlow("settings")}/></div>}
+    {flow==="inspHistory"&&<div style={{flex:1,overflowY:"auto"}}><PreshiftHistoryScreen mineId={activeMine?.id} onBack={()=>setFlow("setup")}/></div>}
+    {flow==="setup"&&<div style={{flex:1,overflowY:"auto"}}><SetupHub user={user} activeMine={activeMine} allMachines={allMachines} onClose={()=>setFlow("app")} onNavPlants={()=>setFlow("plants")} onNavWorkplaceAreas={()=>setFlow("workplaceAreas")} onNavExtinguisherLocations={()=>setFlow("extinguisherLocations")} onAddMachine={()=>setFlow("addMachine")} onPreshiftHistory={()=>setFlow("inspHistory")}/></div>}
+    {flow==="plants"&&<div style={{flex:1,overflowY:"auto"}}><PlantsAdminScreen activeMine={activeMine} onBack={()=>setFlow("setup")}/></div>}
+    {flow==="extinguisherLocations"&&<div style={{flex:1,overflowY:"auto"}}><ExtinguisherLocationsAdminScreen activeMine={activeMine} onBack={()=>setFlow("setup")}/></div>}
     {flow==="fireInspect"&&<div style={{flex:1,overflowY:"auto"}}><FireExtinguisherInspectScreen activeMine={activeMine} user={user} onBack={()=>setFlow("app")}/></div>}
     {flow==="workplaceExam"&&<div style={{flex:1,overflowY:"auto"}}><WorkplaceExamScreen activeMine={activeMine} activeShiftId={activeShiftId} user={user} onComplete={()=>setFlow("app")} onBack={()=>setFlow("app")}/></div>}
-    {flow==="workplaceAreas"&&<div style={{flex:1,overflowY:"auto"}}><WorkplaceAreasAdminScreen activeMine={activeMine} onBack={()=>setFlow("settings")}/></div>}
+    {flow==="workplaceAreas"&&<div style={{flex:1,overflowY:"auto"}}><WorkplaceAreasAdminScreen activeMine={activeMine} onBack={()=>setFlow("setup")}/></div>}
     {flow==="reportIssue"&&<div style={{flex:1,overflowY:"auto"}}><CreateTicketScreen activeMine={activeMine} activeShiftId={activeShiftId} user={user} allMachines={allMachines} defaultMachineId={user?.machine} onDone={()=>setFlow("tickets")} onBack={()=>setFlow("app")}/></div>}
     {flow==="tickets"&&<div style={{flex:1,overflowY:"auto"}}><HandoverTicketsScreen activeMine={activeMine} user={user} allMachines={allMachines} onCreate={()=>setFlow("reportIssue")} onSelect={t=>{window.__currentTicketId=t.id;setFlow("ticketDetail");}} onBack={()=>setFlow("app")}/></div>}
     {flow==="ticketDetail"&&<div style={{flex:1,overflowY:"auto"}}><TicketDetailScreen ticketId={window.__currentTicketId} activeMine={activeMine} user={user} allMachines={allMachines} onBack={()=>setFlow("tickets")}/></div>}
