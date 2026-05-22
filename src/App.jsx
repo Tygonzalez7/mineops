@@ -1404,7 +1404,137 @@ function ProductionScreen({user,activeMine,activeShiftId,machineId,role,allMachi
 // One row per PRESTART item. Photo-required items render a "📷 REQ" badge
 // and block the checkbox until a photo is captured. Photo-optional items
 // get a small inline camera button.
-function PrestartItemRow({item,last,checked,canCheck,required,photo,onToggle,onPhotoCaptured,onPhotoCleared}){
+// ── Reference Photo Modal ─────────────────────────────────────────────────
+// Wiki-style cheat sheet for a (machine_model, item_key) pairing. Anyone in
+// the mine can read or contribute. Used as the "?" help button on
+// photo-required check items.
+function ReferencePhotoModal({mineId,machineModel,itemKey,itemLabel,user,onClose}){
+  const[photos,setPhotos]=useState([]);
+  const[loading,setLoading]=useState(true);
+  const[urls,setUrls]=useState({});         // path → signed URL
+  const[lightbox,setLightbox]=useState(null);
+  const[addMode,setAddMode]=useState(false);
+  const[pickedFile,setPickedFile]=useState(null);
+  const[caption,setCaption]=useState("");
+  const[uploading,setUploading]=useState(false);
+  const[err,setErr]=useState("");
+  const fileRef=useRef(null);
+  const[pickedUrl,setPickedUrl]=useState(null);
+  useEffect(()=>{
+    if(!pickedFile){setPickedUrl(null);return;}
+    const u=URL.createObjectURL(pickedFile);
+    setPickedUrl(u);
+    return()=>URL.revokeObjectURL(u);
+  },[pickedFile]);
+
+  const load=async()=>{
+    if(!mineId||!machineModel||!itemKey){setLoading(false);return;}
+    setLoading(true);
+    try{
+      const{data}=await supabase.from("reference_photos")
+        .select("*")
+        .eq("mine_id",mineId).eq("machine_model",machineModel).eq("item_key",itemKey)
+        .order("created_at",{ascending:false});
+      setPhotos(data||[]);
+      // Pre-fetch signed URLs in parallel.
+      const out={};
+      await Promise.all((data||[]).map(async p=>{
+        const u=await getReferencePhotoUrl(p.storage_path);
+        if(u)out[p.storage_path]=u;
+      }));
+      setUrls(out);
+    }catch(e){console.error("ref photos load:",e);}
+    finally{setLoading(false);}
+  };
+  useEffect(()=>{load();},[mineId,machineModel,itemKey]);
+
+  const startAdd=()=>{
+    setAddMode(true);setPickedFile(null);setCaption("");setErr("");
+    setTimeout(()=>fileRef.current?.click(),50);
+  };
+  const onPick=e=>{
+    const f=e.target.files?.[0];
+    if(f)setPickedFile(f);
+    e.target.value="";
+  };
+  const submit=async()=>{
+    if(!pickedFile||uploading)return;
+    setUploading(true);setErr("");
+    try{
+      await uploadReferencePhoto({
+        file:pickedFile,mineId,machineModel,itemKey,
+        caption:caption.trim()||null,
+        uploadedBy:user?.id||null,
+        uploadedByName:user?.name||null,
+      });
+      setAddMode(false);setPickedFile(null);setCaption("");
+      await load();
+    }catch(e){console.error("upload ref photo:",e);setErr(e.message||"Could not upload");}
+    finally{setUploading(false);}
+  };
+
+  return<div style={{position:"fixed",inset:0,background:C.bg,zIndex:500,display:"flex",flexDirection:"column"}}>
+    {lightbox&&<div onClick={()=>setLightbox(null)} style={{position:"fixed",inset:0,background:"rgba(0,0,0,.95)",zIndex:700,display:"flex",alignItems:"center",justifyContent:"center",padding:20}}>
+      <img src={lightbox} alt="" style={{maxWidth:"100%",maxHeight:"100%",objectFit:"contain"}}/>
+      <button onClick={e=>{e.stopPropagation();setLightbox(null);}} style={{position:"absolute",top:14,right:14,background:"rgba(0,0,0,.7)",border:`1px solid ${C.border}`,borderRadius:8,padding:"6px 12px",color:"#fff",fontSize:13,fontFamily:F,fontWeight:700,cursor:"pointer"}}>✕ Close</button>
+    </div>}
+
+    <div style={{background:C.surface,borderBottom:`1px solid ${C.border}`,padding:"14px 16px",display:"flex",justifyContent:"space-between",alignItems:"center",flexShrink:0}}>
+      <div style={{flex:1,minWidth:0}}>
+        <div style={{fontFamily:F,fontWeight:900,fontSize:16,color:C.accent}}>📷 Reference Photos</div>
+        <div style={{fontSize:11,color:C.muted,marginTop:2,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{itemLabel||itemKey} · {machineModel}</div>
+      </div>
+      <button onClick={onClose} style={{background:"none",border:`1px solid ${C.border}`,borderRadius:8,padding:"6px 12px",color:C.muted,fontSize:12,fontFamily:F,fontWeight:700,cursor:"pointer",flexShrink:0}}>✕ Done</button>
+    </div>
+
+    <div style={{flex:1,overflowY:"auto"}}>
+      {addMode?<div style={{background:C.card,border:`1px solid ${C.accent}55`,padding:"14px 16px",margin:14,borderRadius:12}}>
+        <div style={{fontFamily:F,fontWeight:700,fontSize:13,color:C.accent,marginBottom:10}}>Add a reference photo</div>
+        {pickedFile?<div style={{marginBottom:10}}>
+          {pickedUrl&&<img src={pickedUrl} alt="" style={{width:"100%",maxHeight:240,objectFit:"contain",borderRadius:8,border:`1px solid ${C.border}`}}/>}
+          <button onClick={()=>fileRef.current?.click()} style={{background:"none",border:`1px solid ${C.border}`,borderRadius:7,padding:"5px 10px",color:C.muted,fontSize:11,fontFamily:F,fontWeight:700,cursor:"pointer",marginTop:6}}>Retake</button>
+        </div>:<button onClick={()=>fileRef.current?.click()} style={{width:"100%",background:`${C.accent}15`,border:`2px dashed ${C.accent}55`,borderRadius:10,padding:"22px",color:C.accent,fontFamily:F,fontWeight:700,fontSize:14,cursor:"pointer",marginBottom:10}}>📷 Take photo</button>}
+        <div style={{fontSize:11,color:C.muted,fontFamily:F,fontWeight:700,letterSpacing:".06em",textTransform:"uppercase",marginBottom:5}}>Caption <span style={{color:C.muted,fontWeight:400}}>· helps teammates find it</span></div>
+        <input value={caption} onChange={e=>setCaption(e.target.value)} placeholder="e.g. yellow dipstick handle, driver side"
+          style={{background:C.surface,color:C.text,border:`1px solid ${C.border}`,borderRadius:9,padding:"11px 13px",fontSize:13,width:"100%",outline:"none",boxSizing:"border-box",marginBottom:10}}/>
+        {err&&<div style={{fontSize:12,color:C.danger,marginBottom:8}}>⚠ {err}</div>}
+        <div style={{display:"flex",gap:8}}>
+          <button onClick={()=>{setAddMode(false);setPickedFile(null);setCaption("");setErr("");}} disabled={uploading}
+            style={{flex:1,background:"none",border:`1px solid ${C.border}`,borderRadius:9,padding:"11px",color:C.muted,fontFamily:F,fontWeight:700,fontSize:13,cursor:uploading?"default":"pointer"}}>Cancel</button>
+          <button onClick={submit} disabled={!pickedFile||uploading}
+            style={{flex:1,background:pickedFile&&!uploading?C.success:C.border,color:pickedFile&&!uploading?"#000":C.muted,border:"none",borderRadius:9,padding:"11px",fontFamily:F,fontWeight:900,fontSize:13,cursor:pickedFile&&!uploading?"pointer":"default"}}>{uploading?"Uploading…":"Upload"}</button>
+        </div>
+      </div>:<button onClick={startAdd}
+        style={{width:"calc(100% - 28px)",margin:"14px 14px 6px",background:`linear-gradient(135deg,${C.accent},#d4881e)`,border:"none",borderRadius:12,padding:"14px",color:"#000",fontFamily:F,fontWeight:900,fontSize:14,cursor:"pointer",boxShadow:`0 4px 16px ${C.accent}33`}}>+ Add a photo</button>}
+
+      {loading?<div style={{textAlign:"center",padding:40,color:C.muted,fontSize:13}}>Loading reference photos…</div>:
+       photos.length===0?<div style={{textAlign:"center",padding:"50px 22px"}}>
+        <div style={{fontSize:46,marginBottom:10,opacity:.6}}>📷</div>
+        <div style={{fontFamily:F,fontWeight:900,fontSize:17,color:C.text,marginBottom:6}}>No reference photos yet</div>
+        <div style={{fontSize:12,color:C.muted,lineHeight:1.6,maxWidth:280,margin:"0 auto"}}>Be the first to add one — it'll help your team find this on the next machine they touch.</div>
+      </div>:
+       <div style={{padding:"6px 14px 20px"}}>
+        {photos.map(p=>{
+          const url=urls[p.storage_path];
+          return<div key={p.id} style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:12,padding:10,marginBottom:10}}>
+            <button onClick={()=>url&&setLightbox(url)} disabled={!url}
+              style={{width:"100%",background:"none",border:"none",padding:0,cursor:url?"pointer":"default",display:"block",borderRadius:8,overflow:"hidden",aspectRatio:"4/3"}}>
+              {url?<img src={url} alt="" style={{width:"100%",height:"100%",objectFit:"cover",display:"block"}}/>
+                  :<div style={{width:"100%",height:"100%",background:C.bg,display:"flex",alignItems:"center",justifyContent:"center",color:C.muted,fontSize:12}}>Loading…</div>}
+            </button>
+            {p.caption&&<div style={{fontSize:13,color:C.text,marginTop:8,lineHeight:1.4}}>{p.caption}</div>}
+            <div style={{fontSize:10,color:C.muted,marginTop:6,fontFamily:F,fontWeight:700,letterSpacing:".04em"}}>
+              {p.uploaded_by_name||"Unknown"} · {new Date(p.created_at).toLocaleString()}
+            </div>
+          </div>;
+        })}
+      </div>}
+    </div>
+    <input ref={fileRef} type="file" accept="image/*" capture="environment" style={{display:"none"}} onChange={onPick}/>
+  </div>;
+}
+
+function PrestartItemRow({item,last,checked,canCheck,required,photo,onToggle,onPhotoCaptured,onPhotoCleared,onRefHelp}){
   const fileRef=useRef(null);
   const[thumbUrl,setThumbUrl]=useState(null);
   useEffect(()=>{
@@ -1426,6 +1556,9 @@ function PrestartItemRow({item,last,checked,canCheck,required,photo,onToggle,onP
     <div style={{flex:1,minWidth:0}}>
       <div onClick={canCheck?onToggle:undefined} style={{display:"flex",alignItems:"center",gap:8,cursor:canCheck?"pointer":"default",flexWrap:"wrap"}}>
         <span style={{fontSize:14,color:checked?C.text:C.textSub,flex:1,lineHeight:1.3,minWidth:120}}>{item.label}</span>
+        {required&&onRefHelp&&<button onClick={e=>{e.stopPropagation();onRefHelp();}}
+          style={{background:"none",border:`1px solid ${C.info}55`,borderRadius:"50%",width:22,height:22,padding:0,color:C.info,fontSize:13,fontFamily:F,fontWeight:900,cursor:"pointer",lineHeight:1,flexShrink:0}}
+          title="View reference photos for this item">?</button>}
         {required&&<span style={{background:`${badgeCol}22`,color:badgeCol,border:`1px solid ${badgeCol}55`,borderRadius:6,padding:"2px 7px",fontSize:9,fontFamily:F,fontWeight:700,letterSpacing:".04em",whiteSpace:"nowrap"}}>📷 {badgeOK?"OK":"REQ"}</span>}
         {!required&&!photo&&<button onClick={e=>{e.stopPropagation();fileRef.current?.click();}}
           style={{background:"none",border:`1px solid ${C.border}`,borderRadius:6,padding:"3px 7px",color:C.muted,fontSize:11,cursor:"pointer",lineHeight:1}} title="Attach photo (optional)">📷+</button>}
@@ -1452,6 +1585,7 @@ function MachineCheckScreen({allMachines,catDemo,activeMine,activeShiftId,user})
   const[fuel,setFuel]=useState("");
   const[fuelErr,setFuelErr]=useState("");
   const[submitting,setSubmitting]=useState(false);
+  const[refHelp,setRefHelp]=useState(null); // {key, label} for the reference-photo modal
   const overrides=useCheckItemConfig(activeMine);
 
   const setPhoto=(mid,key,file)=>setPhotos(p=>({...p,[mid]:{...(p[mid]||{}),[key]:file}}));
@@ -1479,6 +1613,7 @@ function MachineCheckScreen({allMachines,catDemo,activeMine,activeShiftId,user})
     const reqMissing=requiredMissingCount(sel);
     const can=allItemsDone(sel)&&fuelOk&&reqMissing===0;
     return <div style={{paddingBottom:20}}>
+      {refHelp&&<ReferencePhotoModal mineId={activeMine?.id} machineModel={m?.model||sel} itemKey={refHelp.key} itemLabel={refHelp.label} user={user} onClose={()=>setRefHelp(null)}/>}
       <PageHdr title="Pre-Start Inspection" sub={`${m?.model} · HSMP minimum`} back onBack={()=>setSel(null)}/>
       {isDone?<div style={{textAlign:"center",padding:"40px 20px"}}>
         <div style={{fontSize:52,marginBottom:10}}>✅</div>
@@ -1510,6 +1645,7 @@ function MachineCheckScreen({allMachines,catDemo,activeMine,activeShiftId,user})
               onToggle={()=>{if(canCheck)setChecks(p=>({...p,[sel]:{...(p[sel]||{}),[c.id]:!checked}}));}}
               onPhotoCaptured={file=>setPhoto(sel,c.id,file)}
               onPhotoCleared={()=>setPhoto(sel,c.id,null)}
+              onRefHelp={()=>setRefHelp({key:c.id,label:c.label})}
             />;
           })}
         </div>
