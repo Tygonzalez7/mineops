@@ -745,69 +745,98 @@ function MachinePerformanceScreen({allMachines,custPerfData}){
       </div>
     </div>;
   }
+  const machineRows=allMachines.map(m=>{
+    const truck=isMachTruck(m.type);
+    const raw=[...(MACHINE_PERF[m.id]||[]),...(custPerfData[m.id]||[])];
+    const ops=raw.sort((a,b)=>truck?(a.cycleMin||99)-(b.cycleMin||99):b.tph-a.tph);
+    return{m,truck,ops};
+  });
+  const withData=machineRows.filter(r=>r.ops.length>0);
+  const withoutData=machineRows.filter(r=>r.ops.length===0);
+
   return <div style={{paddingBottom:80}} className="up">
-    <PageHdr title="Machine Performance" sub="Weekly averages · tap machine to rank operators"/>
+    <PageHdr title="Machine Performance" sub="Weekly averages · tap a machine to rank operators"/>
     <div style={{padding:"12px 15px"}}>
-      <div style={{background:`${C.info}08`,border:`1px solid ${C.info}22`,borderRadius:10,padding:"10px 13px",marginBottom:12}}><div style={{fontSize:11,color:C.info,fontFamily:F,fontWeight:700}}>% shown = how much better each operator is vs the one directly below them</div></div>
-      {allMachines.map(m=>{
-        const truck=isMachTruck(m.type),raw=[...(MACHINE_PERF[m.id]||[]),...(custPerfData[m.id]||[])];
-        const ops=raw.sort((a,b)=>truck?(a.cycleMin||99)-(b.cycleMin||99):b.tph-a.tph);
-        const crusher=OP.crushers.find(c=>c.id===m.crusherAssigned),cat=CAT_DEMO[m.id],sc=STATUS_COL[cat?.status]||C.info;
-        const topOp=ops[0],secOp=ops[1],topVal=topOp?(truck?topOp.cycleMin:topOp.tph):null,secVal=secOp?(truck?secOp.cycleMin:secOp.tph):null;
-        const gap=topVal!=null&&secVal!=null?(truck?Math.round(((secVal-topVal)/secVal)*100):Math.round(((topVal-secVal)/secVal)*100)):null;
-        const topC=topOp?(truck?(topOp.cycleMin<=19?C.success:topOp.cycleMin<=22?C.accent:C.danger):(topOp.tph>=250?C.success:topOp.tph>=150?C.accent:C.danger)):C.muted;
-        return <div key={m.id} onClick={()=>setSel(m.id)} style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:14,padding:"14px 15px",marginBottom:10,cursor:"pointer"}}>
-          <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:ops.length?10:0}}>
-            <div><div style={{fontFamily:F,fontWeight:900,fontSize:19,marginBottom:2}}>{m.model}</div><div style={{fontSize:11,color:C.muted}}>{m.type}{m.bucket?` · ${m.bucket}t`:m.payload?` · ${m.payload}t payload`:""}</div></div>
-            <div style={{display:"flex",flexDirection:"column",alignItems:"flex-end",gap:5}}><Pill label={cat?.status?.toUpperCase()||"NEW"} color={sc}/>{crusher&&<div style={{fontSize:10,color:C.muted}}>{crusher.name}</div>}</div>
-          </div>
-          {ops.length>0?<div>
-            <div style={{display:"flex",alignItems:"center",gap:9,marginBottom:8,background:C.surface,borderRadius:10,padding:"9px 11px"}}>
-              <div style={{width:30,height:30,borderRadius:"50%",background:`${topC}22`,border:`2px solid ${topC}44`,display:"flex",alignItems:"center",justifyContent:"center",fontFamily:F,fontWeight:700,fontSize:11,color:topC}}>{topOp.avatar}</div>
-              <div style={{flex:1}}><div style={{fontFamily:F,fontWeight:900,fontSize:14}}>{topOp.name}</div><div style={{fontSize:10,color:C.muted}}>#1 · {topOp.shifts} shifts this week</div></div>
-              <div style={{textAlign:"right"}}><div style={{fontFamily:F,fontWeight:900,fontSize:22,color:topC,lineHeight:1}}>{topVal}</div><div style={{fontSize:9,color:C.muted}}>{truck?"min/cycle":"t/hr"}</div></div>
+      {/* Empty: no machines on this mine yet */}
+      {allMachines.length===0&&<div style={{textAlign:"center",padding:"56px 22px"}}>
+        <div style={{fontSize:46,marginBottom:10,opacity:.6}}>⛏️</div>
+        <div style={{fontFamily:F,fontWeight:900,fontSize:20,color:C.text,marginBottom:6}}>No machines yet</div>
+        <div style={{fontSize:13,color:C.muted,lineHeight:1.6,maxWidth:280,margin:"0 auto"}}>Add a machine from the menu (☰ → Add Machine) and operators will appear here after their first shift.</div>
+      </div>}
+
+      {/* Empty: machines exist but nobody has logged a shift */}
+      {allMachines.length>0&&withData.length===0&&<div style={{textAlign:"center",padding:"56px 22px"}}>
+        <div style={{fontSize:46,marginBottom:10,opacity:.6}}>📊</div>
+        <div style={{fontFamily:F,fontWeight:900,fontSize:20,color:C.text,marginBottom:6}}>No shifts logged yet</div>
+        <div style={{fontSize:13,color:C.muted,lineHeight:1.6,maxWidth:280,margin:"0 auto"}}>Performance rankings appear once operators end their first shift and record tonnage.</div>
+        <div style={{fontSize:11,color:C.muted,marginTop:14,opacity:.7}}>{allMachines.length} machine{allMachines.length!==1?"s":""} ready</div>
+      </div>}
+
+      {/* Machines with data — full ranking cards */}
+      {withData.map(({m,truck,ops})=>{
+        const crusher=OP.crushers.find(c=>c.id===m.crusherAssigned);
+        const cat=CAT_DEMO[m.id],sc=STATUS_COL[cat?.status]||C.info;
+        const topOp=ops[0],secOp=ops[1];
+        const topVal=truck?topOp.cycleMin:topOp.tph;
+        const secVal=secOp?(truck?secOp.cycleMin:secOp.tph):null;
+        const gap=secVal!=null?(truck?Math.round(((secVal-topVal)/secVal)*100):Math.round(((topVal-secVal)/secVal)*100)):null;
+        const topC=truck?(topOp.cycleMin<=19?C.success:topOp.cycleMin<=22?C.accent:C.danger):(topOp.tph>=250?C.success:topOp.tph>=150?C.accent:C.danger);
+        return <div key={m.id} onClick={()=>setSel(m.id)} style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:14,padding:"12px 14px",marginBottom:8,cursor:"pointer"}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:9}}>
+            <div style={{minWidth:0,flex:1}}>
+              <div style={{fontFamily:F,fontWeight:900,fontSize:17,marginBottom:1}}>{m.model}</div>
+              <div style={{fontSize:10,color:C.muted}}>{m.type}{m.bucket?` · ${m.bucket}t`:m.payload?` · ${m.payload}t payload`:""}{crusher?` · ${crusher.name}`:""}</div>
             </div>
-            <div style={{display:"flex",alignItems:"center",fontSize:11}}><span style={{color:C.muted}}>{ops.length} operator{ops.length!==1?"s":""} this week</span>{gap!=null&&<span style={{fontFamily:F,fontWeight:700,color:gap>=5?C.success:C.accent,marginLeft:"auto"}}>{gap>0?(truck?`#1 ${gap}% faster than #2`:`#1 +${gap}% vs #2`):"Same"} → tap to rank all</span>}</div>
-          </div>:<div style={{background:C.surface,borderRadius:8,padding:"9px 11px",fontSize:12,color:C.muted,textAlign:"center"}}>No shifts recorded this week</div>}
+            {cat?.status&&<Pill label={cat.status.toUpperCase()} color={sc}/>}
+          </div>
+          <div style={{display:"flex",alignItems:"center",gap:9,background:C.surface,borderRadius:10,padding:"8px 11px"}}>
+            <div style={{width:28,height:28,borderRadius:"50%",background:`${topC}22`,border:`2px solid ${topC}44`,display:"flex",alignItems:"center",justifyContent:"center",fontFamily:F,fontWeight:700,fontSize:10,color:topC,flexShrink:0}}>{topOp.avatar}</div>
+            <div style={{flex:1,minWidth:0}}>
+              <div style={{fontFamily:F,fontWeight:900,fontSize:13,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{topOp.name}</div>
+              <div style={{fontSize:10,color:C.muted}}>#1 · {ops.length} op{ops.length!==1?"s":""} ranked{gap!=null&&gap>0?` · ${truck?`${gap}% faster`:`+${gap}%`} vs #2`:""}</div>
+            </div>
+            <div style={{textAlign:"right",flexShrink:0}}>
+              <div style={{fontFamily:F,fontWeight:900,fontSize:20,color:topC,lineHeight:1}}>{topVal}</div>
+              <div style={{fontSize:9,color:C.muted,marginTop:1}}>{truck?"min/cycle":"t/hr"}</div>
+            </div>
+          </div>
         </div>;
       })}
+
+      {/* Quiet footer for machines without data when SOME data exists */}
+      {withData.length>0&&withoutData.length>0&&<div style={{marginTop:14,padding:"8px 12px",background:C.surface,border:`1px dashed ${C.border}`,borderRadius:9,fontSize:11,color:C.muted,textAlign:"center"}}>
+        {withoutData.length} other machine{withoutData.length!==1?"s":""} · no shifts this week ({withoutData.map(r=>r.m.model).slice(0,3).join(", ")}{withoutData.length>3?"…":""})
+      </div>}
     </div>
   </div>;
 }
 
 // ── Production Monitoring ─────────────────────────────────────────────────
-// Replaces the legacy ScoopLoggerScreen. Two stacked line charts (size + cycle
-// over time) + role-aware data. VL-connected machines flow data automatically
-// from scoop_logs (Edge Function writes); machines without VL get a manual
-// fallback button.
+// End-of-shift tonnage model. Operators enter (or confirm VL-prefilled)
+// daily tonnage once per shift; daily bars come from daily_production.
+// Cycle-time line chart still draws from scoop_logs but only when VisionLink
+// populates it — humans never write scoop_logs.
 
 const SERIES_COLORS=[C.accent,C.success,C.info,C.purple,C.amber,"#ec4899","#22d3ee","#f97316"];
 
-// Parse "HH:MM" (from SHIFT_TIMELINE) into today's epoch ms.
+// Local YYYY-MM-DD (don't use toISOString — that's UTC and rolls the day).
+function _ymd(d){
+  const dt=d instanceof Date?d:new Date(d);
+  const y=dt.getFullYear(),m=String(dt.getMonth()+1).padStart(2,"0"),day=String(dt.getDate()).padStart(2,"0");
+  return`${y}-${m}-${day}`;
+}
+function _today(){return _ymd(new Date());}
+function _addDays(d,n){const x=new Date(d);x.setDate(x.getDate()+n);return x;}
+function _rangeDates(days){
+  const today=new Date();today.setHours(0,0,0,0);
+  const out=[];
+  for(let i=days-1;i>=0;i--)out.push(_ymd(_addDays(today,-i)));
+  return out;
+}
 function _hmToToday(hm){
   const[h,m]=hm.split(":").map(Number);
   const d=new Date();d.setHours(h,m,0,0);
   return d.getTime();
-}
-
-// Collapse raw scoop points into N-minute buckets (mean per bucket).
-function bucketize(points,minutes=5){
-  if(!points||points.length===0)return[];
-  const ms=minutes*60000;
-  const buckets=new Map();
-  for(const p of points){
-    const key=Math.floor(p.t/ms)*ms;
-    if(!buckets.has(key))buckets.set(key,{t:key,tonnesSum:0,cycleSum:0,cycleN:0,n:0});
-    const b=buckets.get(key);
-    b.tonnesSum+=p.tonnes||0;b.n++;
-    if(p.cycle){b.cycleSum+=p.cycle;b.cycleN++;}
-  }
-  return[...buckets.values()].sort((a,b)=>a.t-b.t).map(b=>({
-    t:b.t,
-    tonnes:+(b.tonnesSum/b.n).toFixed(2),
-    cycle:b.cycleN?+(b.cycleSum/b.cycleN).toFixed(2):null,
-    n:b.n,
-  }));
 }
 
 // Stock-chart style line chart. series: [{id,name,color,points:[{t,v}]}]
@@ -830,7 +859,7 @@ function LineChart({series,height=150,yLabel,title,yMin=0,yMax}){
   const all=series.flatMap(s=>s.points||[]);
   if(all.length===0){
     return<div ref={wrapRef} style={{width:"100%",height,background:C.surface,border:`1px solid ${C.border}`,borderRadius:10,display:"flex",alignItems:"center",justifyContent:"center",marginBottom:8}}>
-      <div style={{fontSize:10,color:C.muted,fontFamily:F,fontWeight:700,letterSpacing:".08em",textTransform:"uppercase"}}>{title||yLabel} · no data yet</div>
+      <div style={{fontSize:10,color:C.muted,fontFamily:F,fontWeight:700,letterSpacing:".08em",textTransform:"uppercase",textAlign:"center",padding:"0 18px",lineHeight:1.5}}>{title||yLabel} · no data yet</div>
     </div>;
   }
   const tMin=Math.min(...all.map(p=>p.t));
@@ -864,9 +893,9 @@ function LineChart({series,height=150,yLabel,title,yMin=0,yMax}){
         return<g key={s.id}>
           <path d={d} fill="none" stroke={s.color} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" opacity={0.95}/>
           {pts.map((p,i)=><circle key={i} cx={sx(p.t)} cy={sy(p.v)} r={2.5} fill={s.color}
-            onMouseEnter={()=>setHover({x:sx(p.t),y:sy(p.v),v:p.v,name:s.name,t:p.t,color:s.color})}
+            onMouseEnter={()=>setHover({x:sx(p.t),y:sy(p.v),v:p.v,name:s.name,t:p.t,color:s.color,kind:"line"})}
             onMouseLeave={()=>setHover(null)}
-            onTouchStart={()=>setHover({x:sx(p.t),y:sy(p.v),v:p.v,name:s.name,t:p.t,color:s.color})}
+            onTouchStart={()=>setHover({x:sx(p.t),y:sy(p.v),v:p.v,name:s.name,t:p.t,color:s.color,kind:"line"})}
             style={{cursor:"pointer"}}
           />)}
           <circle cx={sx(last.t)} cy={sy(last.v)} r={4.5} fill={s.color} opacity={0.35}/>
@@ -881,41 +910,169 @@ function LineChart({series,height=150,yLabel,title,yMin=0,yMax}){
   </div>;
 }
 
-// Hook: load shift production data — operator scope (own shift) or supervisor
-// scope (all of today's shifts at this mine). Polls every 15 s. Demo mode
-// (no real mine) falls back to SHIFT_TIMELINE.
-function useShiftProduction({activeMine,role,userId,remoteOperators,localScoops,activeMachineId}){
+// Stacked vertical bar chart.
+// days: ["YYYY-MM-DD", ...] sorted ascending
+// series: [{id, name, color, data: {date → number}}]
+function BarChart({days,series,height=170,yLabel,title,emptyMessage="No data yet"}){
+  const wrapRef=useRef(null);
+  const[w,setW]=useState(360);
+  const[hover,setHover]=useState(null);
+  useEffect(()=>{
+    if(!wrapRef.current)return;
+    const ro=new ResizeObserver(entries=>{
+      const cr=entries[0]?.contentRect;
+      if(cr)setW(Math.max(220,Math.floor(cr.width)));
+    });
+    ro.observe(wrapRef.current);
+    return()=>ro.disconnect();
+  },[]);
+  const PAD={l:34,r:10,t:8,b:24};
+  const innerW=w-PAD.l-PAD.r;
+  const innerH=height-PAD.t-PAD.b;
+  const dayTotals=days.map(d=>series.reduce((a,s)=>a+(s.data?.[d]||0),0));
+  const anyData=dayTotals.some(v=>v>0);
+  if(!anyData){
+    return<div ref={wrapRef} style={{width:"100%",height,background:C.surface,border:`1px solid ${C.border}`,borderRadius:10,display:"flex",alignItems:"center",justifyContent:"center",marginBottom:8}}>
+      <div style={{fontSize:10,color:C.muted,fontFamily:F,fontWeight:700,letterSpacing:".08em",textTransform:"uppercase",textAlign:"center",padding:"0 18px",lineHeight:1.5}}>{title||yLabel} · {emptyMessage}</div>
+    </div>;
+  }
+  const vMax=Math.max(...dayTotals)*1.15||1;
+  const barGap=days.length<=14?3:days.length<=21?2:1;
+  const bandW=innerW/days.length;
+  const barW=Math.max(2,bandW-barGap);
+  const sy=v=>PAD.t+(1-v/vMax)*innerH;
+  const fmtVal=v=>v>=1000?`${(v/1000).toFixed(1)}k`:v>=100?Math.round(v).toString():v.toFixed(1);
+  const fmtDay=d=>{const dt=new Date(d+"T00:00");return`${dt.getMonth()+1}/${dt.getDate()}`;};
+  const labelStep=Math.max(1,Math.ceil(days.length/5));
+  const yTicks=[0,vMax/2,vMax];
+  return<div ref={wrapRef} style={{position:"relative",width:"100%",marginBottom:8}}>
+    {title&&<div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline",padding:"0 4px 4px"}}>
+      <div style={{fontSize:9,color:C.muted,fontFamily:F,fontWeight:700,letterSpacing:".1em",textTransform:"uppercase"}}>{title}</div>
+      {yLabel&&<div style={{fontSize:9,color:C.muted,fontFamily:F,fontWeight:700,letterSpacing:".08em"}}>{yLabel}</div>}
+    </div>}
+    <svg width={w} height={height} style={{display:"block",background:C.surface,border:`1px solid ${C.border}`,borderRadius:10}}>
+      {yTicks.map((v,i)=><g key={`y${i}`}>
+        <line x1={PAD.l} x2={w-PAD.r} y1={sy(v)} y2={sy(v)} stroke={C.border} strokeWidth={0.5} opacity={0.6}/>
+        <text x={PAD.l-4} y={sy(v)+3} textAnchor="end" style={{fontSize:9,fill:C.muted,fontFamily:F}}>{fmtVal(v)}</text>
+      </g>)}
+      {days.map((d,i)=>{
+        const x=PAD.l+i*bandW+(bandW-barW)/2;
+        let yCursor=sy(0);
+        const segs=series.map(s=>{
+          const v=s.data?.[d]||0;
+          if(v<=0)return null;
+          const h=sy(0)-sy(v);
+          yCursor-=h;
+          return{color:s.color,name:s.name,v,y:yCursor,h};
+        }).filter(Boolean);
+        const total=dayTotals[i];
+        return<g key={d}>
+          {segs.map((seg,si)=><rect key={si} x={x} y={seg.y} width={barW} height={seg.h} fill={seg.color} opacity={0.92}
+            onMouseEnter={()=>setHover({x:x+barW/2,y:sy(total),d,total,segs,color:seg.color})}
+            onMouseLeave={()=>setHover(null)}
+            onTouchStart={()=>setHover({x:x+barW/2,y:sy(total),d,total,segs,color:seg.color})}
+            style={{cursor:"pointer"}}
+          />)}
+          {(i%labelStep===0||i===days.length-1)&&<text x={x+barW/2} y={height-8} textAnchor="middle" style={{fontSize:9,fill:C.muted,fontFamily:F}}>{fmtDay(d)}</text>}
+        </g>;
+      })}
+    </svg>
+    {hover&&<div style={{position:"absolute",left:Math.min(Math.max(hover.x-80,4),w-170),top:Math.max(hover.y-Math.min(38+hover.segs.length*12,80),0),background:C.bg,border:`1px solid ${hover.color}66`,borderRadius:7,padding:"6px 10px",fontSize:11,fontFamily:F,fontWeight:700,color:C.text,pointerEvents:"none",whiteSpace:"nowrap",zIndex:5,boxShadow:"0 4px 16px rgba(0,0,0,.4)",minWidth:140}}>
+      <div style={{color:C.muted,fontSize:9,letterSpacing:".06em",textTransform:"uppercase",marginBottom:3}}>{fmtDay(hover.d)}</div>
+      <div style={{color:C.text,fontSize:14,marginBottom:hover.segs.length>1?4:0}}>{fmtVal(hover.total)}{yLabel?` ${yLabel}`:""}</div>
+      {hover.segs.length>1&&hover.segs.slice().reverse().map((s,i)=><div key={i} style={{display:"flex",alignItems:"center",gap:6,fontSize:10,marginTop:2}}>
+        <span style={{width:8,height:8,borderRadius:2,background:s.color}}/><span style={{color:C.textSub}}>{s.name}</span><span style={{marginLeft:"auto",color:C.text}}>{fmtVal(s.v)}</span>
+      </div>)}
+    </div>}
+  </div>;
+}
+
+// Hook: load daily_production over a date range.
+//   Operator scope (lv===1): own rows
+//   Supervisor / manager scope: all rows for the mine
+// Demo mode (no real mine) synthesises plausible daily history per operator.
+function useDailyProduction({activeMine,role,userId,rangeDays,remoteOperators,refreshTick}){
   const[byOperator,setByOperator]=useState(()=>new Map());
   const[lastSync,setLastSync]=useState(null);
   const lv=ROLES[role]?.level||1;
   const opsLen=(remoteOperators||[]).length;
 
   useEffect(()=>{
-    // Demo mode → synthesize from SHIFT_TIMELINE + LIVE_OPS
     if(!activeMine?.id){
       const m=new Map();
       const targetUsers=lv===1
         ?USERS.filter(u=>u.id===userId&&u.role==="operator")
         :USERS.filter(u=>u.role==="operator"&&LIVE_OPS[u.id]);
       for(const u of targetUsers){
-        const mach=BASE_MACHINES.find(x=>x.id===u.machine);
-        const bT=mach?.bucket||mach?.payload||7;
+        const liveTph=LIVE_OPS[u.id]?.tph||120;
+        const baseDaily=Math.round(liveTph*8.5);
+        const days={};
+        for(const d of _rangeDates(rangeDays)){
+          const variance=0.78+Math.random()*0.32;
+          days[d]=Math.round(baseDaily*variance);
+        }
+        m.set(u.id,{operatorId:u.id,name:u.name,machineId:u.machine,days});
+      }
+      setByOperator(m);setLastSync(Date.now());
+      return;
+    }
+    let cancelled=false;
+    (async()=>{
+      try{
+        const fromDate=_addDays(new Date(),-(rangeDays-1));fromDate.setHours(0,0,0,0);
+        let q=supabase.from("daily_production")
+          .select("operator_id,machine_id,date,tonnage,source")
+          .eq("mine_id",activeMine.id)
+          .gte("date",_ymd(fromDate))
+          .order("date",{ascending:true});
+        if(lv===1&&userId)q=q.eq("operator_id",userId);
+        const{data,error}=await q;
+        if(error)throw error;
+        const opNameById=new Map((remoteOperators||[]).map(o=>[o.id,o.name]));
+        const result=new Map();
+        for(const row of data||[]){
+          const opId=row.operator_id;
+          if(!result.has(opId))result.set(opId,{operatorId:opId,name:opNameById.get(opId)||"Operator",machineId:row.machine_id,days:{}});
+          const slot=result.get(opId);
+          slot.days[row.date]=(slot.days[row.date]||0)+Number(row.tonnage);
+          if(!slot.machineId)slot.machineId=row.machine_id;
+        }
+        if(!cancelled){setByOperator(result);setLastSync(Date.now());}
+      }catch(e){console.error("useDailyProduction:",e);}
+    })();
+    return()=>{cancelled=true;};
+  },[activeMine?.id,role,userId,lv,rangeDays,opsLen,refreshTick]);
+
+  return{byOperator,lastSync,demoMode:!activeMine?.id};
+}
+
+// Hook: cycle-time telemetry from scoop_logs (VL-populated only).
+function useCycleTelemetry({activeMine,role,userId,remoteOperators}){
+  const[byOperator,setByOperator]=useState(()=>new Map());
+  const[lastSync,setLastSync]=useState(null);
+  const lv=ROLES[role]?.level||1;
+  const opsLen=(remoteOperators||[]).length;
+
+  useEffect(()=>{
+    if(!activeMine?.id){
+      const m=new Map();
+      const targetUsers=lv===1
+        ?USERS.filter(u=>u.id===userId&&u.role==="operator")
+        :USERS.filter(u=>u.role==="operator"&&LIVE_OPS[u.id]);
+      for(const u of targetUsers){
         const cyc=LIVE_OPS[u.id]?.cycleMin||3;
         const pts=[];
         for(const row of SHIFT_TIMELINE){
-          const tphV=row[u.id]||0;
-          if(row.idle||tphV===0)continue;
-          const fill=0.88+Math.random()*0.1;
-          pts.push({t:_hmToToday(row.t),tonnes:+(bT*fill).toFixed(2),cycle:+(cyc+(Math.random()-0.5)*0.3).toFixed(2),machineId:u.machine});
+          if(row.idle||!row[u.id])continue;
+          pts.push({t:_hmToToday(row.t),cycle:+(cyc+(Math.random()-0.5)*0.3).toFixed(2)});
         }
         m.set(u.id,{operatorId:u.id,name:u.name,points:pts});
       }
       setByOperator(m);setLastSync(Date.now());
       return;
     }
-
     let cancelled=false;
-    const fetchProduction=async()=>{
+    const fetchCycles=async()=>{
       try{
         const startOfToday=new Date();startOfToday.setHours(0,0,0,0);
         let sQuery=supabase.from("shifts")
@@ -927,49 +1084,141 @@ function useShiftProduction({activeMine,role,userId,remoteOperators,localScoops,
         if(sErr)throw sErr;
         const shiftIds=(shifts||[]).map(s=>s.id);
         const shiftToOp=new Map((shifts||[]).map(s=>[s.id,s.operator_id]));
-        if(shiftIds.length===0){
-          if(!cancelled){setByOperator(new Map());setLastSync(Date.now());}
-          return;
-        }
+        if(shiftIds.length===0){if(!cancelled){setByOperator(new Map());setLastSync(Date.now());}return;}
         const{data:logs,error:lErr}=await supabase.from("scoop_logs")
-          .select("shift_id,machine_id,tonnes,cycle_time_min,logged_at")
+          .select("shift_id,cycle_time_min,logged_at")
           .in("shift_id",shiftIds)
+          .not("cycle_time_min","is",null)
           .order("logged_at",{ascending:true});
         if(lErr)throw lErr;
         const opNameById=new Map((remoteOperators||[]).map(o=>[o.id,o.name]));
         const result=new Map();
         for(const log of logs||[]){
-          const opId=shiftToOp.get(log.shift_id)||"unknown";
+          const opId=shiftToOp.get(log.shift_id);if(!opId)continue;
           if(!result.has(opId))result.set(opId,{operatorId:opId,name:opNameById.get(opId)||"Operator",points:[]});
-          result.get(opId).points.push({t:new Date(log.logged_at).getTime(),tonnes:log.tonnes,cycle:log.cycle_time_min,machineId:log.machine_id});
+          result.get(opId).points.push({t:new Date(log.logged_at).getTime(),cycle:Number(log.cycle_time_min)});
         }
         if(!cancelled){setByOperator(result);setLastSync(Date.now());}
-      }catch(e){console.error("useShiftProduction:",e);}
+      }catch(e){console.error("useCycleTelemetry:",e);}
     };
-    fetchProduction();
-    const iv=setInterval(fetchProduction,15000);
+    fetchCycles();
+    const iv=setInterval(fetchCycles,30000);
     return()=>{cancelled=true;clearInterval(iv);};
   },[activeMine?.id,role,userId,lv,opsLen]);
 
-  // Merge optimistic local scoops (de-dup by t within 5 s).
-  const merged=useMemo(()=>{
-    if(!localScoops?.length||!userId)return byOperator;
-    const m=new Map(byOperator);
-    const existing=m.get(userId)||{operatorId:userId,name:"You",points:[]};
-    const points=[...existing.points];
-    for(const s of localScoops){
-      const dup=points.some(p=>Math.abs(p.t-s.t)<5000);
-      if(!dup)points.push({t:s.t,tonnes:s.tonnes,cycle:s.cycle,machineId:activeMachineId});
-    }
-    m.set(userId,{...existing,points});
-    return m;
-  },[byOperator,localScoops,userId,activeMachineId]);
+  return{byOperator,lastSync};
+}
 
-  return{byOperator:merged,lastSync,demoMode:!activeMine?.id};
+// ── End Shift Modal ───────────────────────────────────────────────────────
+function EndShiftModal({user,activeMine,activeShiftId,machine,bucketT,onClose,onEnded}){
+  const vlConnected=!!machine?.vl_connected;
+  const[tonnage,setTonnage]=useState("");
+  const[notes,setNotes]=useState("");
+  const[prefilled,setPrefilled]=useState(null);
+  const[submitting,setSubmitting]=useState(false);
+  const[err,setErr]=useState("");
+  const[done,setDone]=useState(false);
+
+  useEffect(()=>{
+    if(!vlConnected||!activeMine?.id||!activeShiftId)return;
+    let cancelled=false;
+    (async()=>{
+      try{
+        const{data,error}=await supabase.from("scoop_logs").select("tonnes").eq("shift_id",activeShiftId);
+        if(error)throw error;
+        const sum=(data||[]).reduce((a,r)=>a+Number(r.tonnes||0),0);
+        if(cancelled)return;
+        if(sum>0){const rounded=Math.round(sum);setPrefilled(rounded);setTonnage(String(rounded));}
+      }catch(e){console.error("VL prefill:",e);}
+    })();
+    return()=>{cancelled=true;};
+  },[vlConnected,activeMine?.id,activeShiftId]);
+
+  const tonNum=parseFloat(tonnage);
+  const valid=!Number.isNaN(tonNum)&&tonNum>=0&&tonNum<=100000;
+
+  const submit=async()=>{
+    if(!valid||submitting)return;
+    setSubmitting(true);setErr("");
+    const mid=machine?.id||user?.machine;
+    try{
+      if(!activeMine?.id||!user?.id||!mid){
+        setDone(true);setSubmitting(false);
+        setTimeout(()=>{onEnded&&onEnded();onClose&&onClose();},900);
+        return;
+      }
+      const source=prefilled!=null&&tonNum===prefilled?"visionlink":"manual";
+      const{error:dpErr}=await supabase.from("daily_production").upsert({
+        mine_id:activeMine.id,
+        machine_id:mid,
+        operator_id:user.id,
+        shift_id:activeShiftId||null,
+        date:_today(),
+        tonnage:tonNum,
+        source,
+        notes:notes.trim()||null,
+      },{onConflict:"shift_id"});
+      if(dpErr)throw dpErr;
+      if(activeShiftId){
+        const{error:sErr}=await supabase.from("shifts").update({status:"completed",shift_end:new Date().toISOString()}).eq("id",activeShiftId);
+        if(sErr)console.warn("shift complete:",sErr);
+      }
+      setDone(true);setSubmitting(false);
+      setTimeout(()=>{onEnded&&onEnded();onClose&&onClose();},900);
+    }catch(e){console.error("end shift:",e);setErr(e.message||"Could not save");setSubmitting(false);}
+  };
+
+  return<div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.85)",zIndex:400,display:"flex",alignItems:"flex-end"}}>
+    <div style={{background:C.surface,borderTop:`3px solid ${C.accent}`,borderRadius:"18px 18px 0 0",padding:"20px 18px 28px",width:"100%",maxWidth:420,margin:"0 auto"}}>
+      <div style={{textAlign:"center",marginBottom:14}}>
+        <div style={{fontFamily:F,fontWeight:900,fontSize:24,color:C.accent}}>END SHIFT</div>
+        <div style={{fontSize:12,color:C.muted,marginTop:3}}>{machine?.model||"—"} · {bucketT}t bucket</div>
+      </div>
+
+      {done?<div style={{textAlign:"center",padding:"24px 0"}}>
+        <div style={{fontSize:46,marginBottom:8}}>✅</div>
+        <div style={{fontFamily:F,fontWeight:900,fontSize:20,color:C.success}}>Shift signed off</div>
+        <div style={{fontSize:12,color:C.muted,marginTop:4}}>{tonNum.toLocaleString()} t recorded for today</div>
+      </div>:<>
+        {vlConnected&&prefilled!=null&&<div style={{background:`${C.success}10`,border:`1px solid ${C.success}33`,borderRadius:10,padding:"10px 12px",marginBottom:12}}>
+          <div style={{fontSize:10,color:C.success,fontFamily:F,fontWeight:700,letterSpacing:".06em",textTransform:"uppercase",marginBottom:3}}>● VisionLink prefill</div>
+          <div style={{fontSize:12,color:C.textSub,lineHeight:1.5}}>VisionLink reported <b style={{color:C.text}}>{prefilled.toLocaleString()} t</b> today. Confirm or override below.</div>
+        </div>}
+        {vlConnected&&prefilled===null&&<div style={{background:`${C.amber}10`,border:`1px solid ${C.amber}33`,borderRadius:10,padding:"10px 12px",marginBottom:12}}>
+          <div style={{fontSize:11,color:C.amber,fontFamily:F,fontWeight:700}}>VisionLink had no production data for this shift — enter manually</div>
+        </div>}
+
+        <div style={{marginBottom:12}}>
+          <div style={{fontSize:11,color:C.muted,fontFamily:F,fontWeight:700,letterSpacing:".06em",textTransform:"uppercase",marginBottom:6}}>Tonnage today <span style={{color:C.danger}}>*</span></div>
+          <div style={{position:"relative"}}>
+            <input type="number" inputMode="decimal" min="0" step="1" value={tonnage} onChange={e=>setTonnage(e.target.value)}
+              placeholder="e.g. 1450"
+              style={{background:C.card,color:C.text,border:`2px solid ${valid?C.success:tonnage?C.danger:C.border}`,borderRadius:10,padding:"14px 50px 14px 16px",fontSize:22,fontFamily:F,fontWeight:900,width:"100%",outline:"none",boxSizing:"border-box"}}/>
+            <div style={{position:"absolute",right:14,top:"50%",transform:"translateY(-50%)",fontSize:14,color:C.muted,fontFamily:F,fontWeight:700,pointerEvents:"none"}}>t</div>
+          </div>
+        </div>
+
+        <div style={{marginBottom:14}}>
+          <div style={{fontSize:11,color:C.muted,fontFamily:F,fontWeight:700,letterSpacing:".06em",textTransform:"uppercase",marginBottom:6}}>Notes <span style={{color:C.muted,fontWeight:400}}>· optional</span></div>
+          <textarea rows={2} value={notes} onChange={e=>setNotes(e.target.value)}
+            placeholder="e.g. lost 30 min to rock jam, fuel topped at 11:00"
+            style={{background:C.card,color:C.text,border:`1px solid ${C.border}`,borderRadius:9,padding:"10px 13px",fontSize:13,width:"100%",outline:"none",resize:"none",boxSizing:"border-box",fontFamily:"inherit"}}/>
+        </div>
+
+        {err&&<div style={{fontSize:12,color:C.danger,marginBottom:10}}>{err}</div>}
+
+        <button onClick={submit} disabled={!valid||submitting}
+          style={{width:"100%",background:valid&&!submitting?`linear-gradient(135deg,${C.accent},#e09520)`:C.border,color:valid&&!submitting?"#000":C.muted,border:"none",borderRadius:12,padding:"15px",fontFamily:F,fontWeight:900,fontSize:18,letterSpacing:".04em",cursor:valid&&!submitting?"pointer":"default",marginBottom:6}}>
+          {submitting?"Saving…":valid?"✅ SIGN OFF SHIFT":"Enter tonnage to continue"}
+        </button>
+        <button onClick={onClose} disabled={submitting} style={{width:"100%",background:"transparent",border:"none",color:C.muted,padding:"10px",fontFamily:F,fontWeight:700,fontSize:13,cursor:submitting?"default":"pointer"}}>Cancel</button>
+      </>}
+    </div>
+  </div>;
 }
 
 // ── Production Screen ─────────────────────────────────────────────────────
-function ProductionScreen({user,activeMine,activeShiftId,machineId,role,allMachines,remoteOperators}){
+function ProductionScreen({user,activeMine,activeShiftId,machineId,role,allMachines,remoteOperators,onShiftEnded}){
   const lv=ROLES[role]?.level||1;
   const isOperator=lv===1;
   const remoteMachine=(allMachines||[]).find(m=>m.id===machineId);
@@ -979,91 +1228,80 @@ function ProductionScreen({user,activeMine,activeShiftId,machineId,role,allMachi
   const bucketT=machine?.bucket_size??machine?.bucket??machine?.payload??7.5;
   const vlConnected=!!machine?.vl_connected;
 
-  const[tab,setTab]=useState("scoops");
-  const[sel,setSel]=useState("full");
-  const[pop,setPop]=useState(false);
-  const[localScoops,setLocalScoops]=useState([]);
+  const[tab,setTab]=useState("prod");
+  const[rangeDays,setRangeDays]=useState(14);
+  const[filterOp,setFilterOp]=useState(null);
+  const[endModalOpen,setEndModalOpen]=useState(false);
+  const[refreshTick,setRefreshTick]=useState(0);
   const[events,setEvents]=useState([]);
   const[idleVis,setIdleVis]=useState(false);
   const[idleMins,setIdleMins]=useState(0);
   const[simOn,setSimOn]=useState(false);
   const[idleNote,setIdleNote]=useState("");
-  const[filterOp,setFilterOp]=useState(null);
-  const shiftStart=useRef(Date.now()-3*3600*1000);
-  const lastTap=useRef(null);
   const idleRef=useRef(null);
   useEffect(()=>()=>clearInterval(idleRef.current),[]);
 
-  const{byOperator,lastSync,demoMode}=useShiftProduction({
-    activeMine,role,userId:user?.id,
-    remoteOperators,localScoops,activeMachineId:machineId||user?.machine,
+  const{byOperator,lastSync,demoMode}=useDailyProduction({
+    activeMine,role,userId:user?.id,rangeDays,remoteOperators,refreshTick,
+  });
+  const{byOperator:cycleByOp}=useCycleTelemetry({
+    activeMine,role,userId:user?.id,remoteOperators,
   });
 
   const opsArr=[...byOperator.values()];
+  const days=useMemo(()=>_rangeDates(rangeDays),[rangeDays]);
   const visibleOps=isOperator
     ?opsArr.filter(o=>o.operatorId===user?.id)
     :(filterOp?opsArr.filter(o=>o.operatorId===filterOp):opsArr);
-  const tonnesSeries=visibleOps.map(o=>({
-    id:`${o.operatorId}-t`,
+  const tonnageSeries=visibleOps.map(o=>({
+    id:o.operatorId,
     name:o.name,
     color:isOperator?C.accent:SERIES_COLORS[opsArr.indexOf(o)%SERIES_COLORS.length],
-    points:bucketize(o.points,5).map(b=>({t:b.t,v:b.tonnes})),
-  }));
-  const cycleSeries=visibleOps.map(o=>({
-    id:`${o.operatorId}-c`,
-    name:o.name,
-    color:isOperator?C.info:SERIES_COLORS[opsArr.indexOf(o)%SERIES_COLORS.length],
-    points:bucketize(o.points,5).filter(b=>b.cycle!=null).map(b=>({t:b.t,v:b.cycle})),
+    data:o.days||{},
   }));
 
-  const myData=byOperator.get(user?.id);
-  const myPoints=myData?.points||[];
-  const totalT=+myPoints.reduce((a,p)=>a+(p.tonnes||0),0).toFixed(1);
-  const cycles=myPoints.map(p=>p.cycle).filter(Boolean);
-  const avgCyc=cycles.length?+(cycles.reduce((a,c)=>a+c,0)/cycles.length).toFixed(2):null;
-  const shiftHours=Math.max((Date.now()-shiftStart.current)/3600000,0.05);
-  const tph=myPoints.length?+(totalT/shiftHours).toFixed(1):0;
-  const gap=crusher?Math.max(0,crusher.capacityTph-tph):0;
-  const fillPct=crusher&&tph?Math.min(100,(tph/crusher.capacityTph)*100):0;
-  const barCol=fillPct>=95?C.success:fillPct>=80?C.accent:C.danger;
-  const selSz=SIZES.find(s=>s.key===sel);
+  const cycleOps=isOperator
+    ?[...cycleByOp.values()].filter(o=>o.operatorId===user?.id)
+    :[...cycleByOp.values()].filter(o=>!filterOp||o.operatorId===filterOp);
+  const cycleSeries=cycleOps.map(o=>{
+    const matched=opsArr.find(x=>x.operatorId===o.operatorId);
+    const idx=matched?opsArr.indexOf(matched):0;
+    return{
+      id:`${o.operatorId}-c`,
+      name:o.name,
+      color:isOperator?C.info:SERIES_COLORS[idx%SERIES_COLORS.length],
+      points:(o.points||[]).map(p=>({t:p.t,v:p.cycle})),
+    };
+  });
 
-  const allPoints=opsArr.flatMap(o=>o.points);
-  const mineTotalT=+allPoints.reduce((a,p)=>a+(p.tonnes||0),0).toFixed(1);
-  const mineTph=allPoints.length?+(mineTotalT/shiftHours).toFixed(1):0;
+  const today=_today();
+  const myToday=byOperator.get(user?.id)?.days?.[today]||0;
+  const myDays=byOperator.get(user?.id)?.days||{};
+  const myRangeTotal=Object.values(myDays).reduce((a,v)=>a+v,0);
+  const myDaysWithData=Object.values(myDays).filter(v=>v>0).length;
+  const myAvg=myDaysWithData?Math.round(myRangeTotal/myDaysWithData):0;
 
-  const logScoop=async()=>{
-    const sz=SIZES.find(s=>s.key===sel);
-    const tonnes=+(bucketT*(sz.pct/100)).toFixed(2);
-    const now=Date.now();
-    const cycle=lastTap.current?+((now-lastTap.current)/60000).toFixed(2):null;
-    lastTap.current=now;
-    setPop(true);setTimeout(()=>setPop(false),220);
-    setLocalScoops(p=>[...p,{size:sel,tonnes,pct:sz.pct,cycle,t:now}]);
-    const mid=machineId||user?.machine;
-    if(activeMine?.id&&activeShiftId&&mid){
-      try{
-        const{error}=await supabase.from("scoop_logs").insert({
-          mine_id:activeMine.id,shift_id:activeShiftId,machine_id:mid,
-          size:sel,fill_pct:sz.pct,tonnes,cycle_time_min:cycle,
-          logged_at:new Date(now).toISOString(),
-        });
-        if(error)console.error("scoop insert:",error);
-      }catch(e){console.error("scoop exception:",e);}
-    }
-  };
+  const mineToday=opsArr.reduce((a,o)=>a+(o.days?.[today]||0),0);
+  const mineRangeTotal=opsArr.reduce((a,o)=>a+Object.values(o.days||{}).reduce((b,v)=>b+v,0),0);
+  const todayOps=opsArr.filter(o=>(o.days?.[today]||0)>0).length;
+  const hasOwnEntryToday=!!byOperator.get(user?.id)?.days?.[today];
+
+  const subtabs=isOperator
+    ?[["prod","📈","Production"],["log","📋","Downtime"],["blast","💥","Blast"]]
+    :[["prod","📈","Production"],["blast","💥","Blast"]];
+  const tb=([t,ic,lb])=><button key={t} onClick={()=>setTab(t)} style={{flex:1,padding:"8px 0",background:"none",border:"none",color:tab===t?C.accent:C.muted,fontFamily:F,fontWeight:700,fontSize:9,borderBottom:`2px solid ${tab===t?C.accent:"transparent"}`,cursor:"pointer"}}><span style={{fontSize:13}}>{ic}</span>{" "}{lb}</button>;
+  const lastSyncLabel=lastSync?new Date(lastSync).toLocaleTimeString([],{hour:"2-digit",minute:"2-digit",hour12:false}):"—";
+
   const startIdle=()=>{if(simOn)return;setSimOn(true);let m=0;idleRef.current=setInterval(()=>{m++;setIdleMins(m);if(m>=OP.idleAlertMins){setIdleVis(true);clearInterval(idleRef.current);}},400);};
   const logReason=async cat=>{const now=new Date();const durMin=+idleMins;const dc=DT_CATS[cat];setEvents(p=>[...p,{cat,hrs:+(idleMins/60).toFixed(2),time:`${String(now.getHours()).padStart(2,"0")}:${String(now.getMinutes()).padStart(2,"0")}`,note:idleNote}]);const mid=machineId||user?.machine;if(activeMine?.id&&activeShiftId&&mid){try{const{error}=await supabase.from("downtime_logs").insert({mine_id:activeMine.id,shift_id:activeShiftId,machine_id:mid,category:cat,duration_min:durMin,note:idleNote||null,is_operator_fault:!!(dc&&dc.fault),flagged_for_supervisor:false,logged_at:new Date().toISOString()});if(error)console.error("downtime insert:",error);}catch(e){console.error("downtime exception:",e);}}setIdleVis(false);setSimOn(false);setIdleMins(0);setIdleNote("");clearInterval(idleRef.current);};
   const flagLater=async()=>{const now=new Date();const durMin=+idleMins;setEvents(p=>[...p,{cat:"other",hrs:+(idleMins/60).toFixed(2),time:`${String(now.getHours()).padStart(2,"0")}:${String(now.getMinutes()).padStart(2,"0")}`,note:"⚠ Reason not recorded — flagged for supervisor",flagged:true}]);const mid=machineId||user?.machine;if(activeMine?.id&&activeShiftId&&mid){try{const{error}=await supabase.from("downtime_logs").insert({mine_id:activeMine.id,shift_id:activeShiftId,machine_id:mid,category:"other",duration_min:durMin,note:"Reason not recorded — flagged for supervisor",is_operator_fault:false,flagged_for_supervisor:true,logged_at:new Date().toISOString()});if(error)console.error("downtime flag insert:",error);}catch(e){console.error("downtime flag exception:",e);}}setIdleVis(false);setSimOn(false);setIdleMins(0);clearInterval(idleRef.current);};
 
-  const subtabs=isOperator
-    ?[["scoops","📈","Production"],["log","📋","Downtime"],["blast","💥","Blast"]]
-    :[["scoops","📈","Production"],["blast","💥","Blast"]];
-  const tb=([t,ic,lb])=><button key={t} onClick={()=>setTab(t)} style={{flex:1,padding:"8px 0",background:"none",border:"none",color:tab===t?C.accent:C.muted,fontFamily:F,fontWeight:700,fontSize:9,borderBottom:`2px solid ${tab===t?C.accent:"transparent"}`,cursor:"pointer"}}><span style={{fontSize:13}}>{ic}</span>{" "}{lb}</button>;
-  const lastSyncLabel=lastSync?new Date(lastSync).toLocaleTimeString([],{hour:"2-digit",minute:"2-digit",hour12:false}):"—";
-
   return<div style={{paddingBottom:80}} className="up">
-    {/* Idle modal — operators only */}
+    {endModalOpen&&<EndShiftModal user={user} activeMine={activeMine} activeShiftId={activeShiftId} machine={machine} bucketT={bucketT}
+      onClose={()=>setEndModalOpen(false)}
+      onEnded={()=>{setRefreshTick(t=>t+1);onShiftEnded&&onShiftEnded();}}
+    />}
+
     {isOperator&&idleVis&&<div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.85)",zIndex:300,display:"flex",alignItems:"flex-end"}}>
       <div style={{background:C.surface,borderTop:`3px solid ${C.danger}`,borderRadius:"18px 18px 0 0",padding:"20px 18px 28px",width:"100%",maxWidth:420,margin:"0 auto"}}>
         <div style={{textAlign:"center",marginBottom:16}}><div style={{fontFamily:F,fontWeight:900,fontSize:26,color:C.danger}}>🕒 IDLE {idleMins} MIN</div><div style={{fontSize:13,color:C.textSub,marginTop:4}}>Log the reason to continue.</div></div>
@@ -1073,7 +1311,6 @@ function ProductionScreen({user,activeMine,activeShiftId,machineId,role,allMachi
       </div>
     </div>}
 
-    {/* Header */}
     <div style={{background:C.surface,borderBottom:`1px solid ${C.border}`,padding:"12px 15px"}}>
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
         <div>
@@ -1081,7 +1318,7 @@ function ProductionScreen({user,activeMine,activeShiftId,machineId,role,allMachi
             {isOperator?<>{machine?.model||"—"} <span style={{color:C.accent}}>· {crusher?.name||"—"}</span></>:"Mine Production"}
           </div>
           <div style={{fontSize:10,color:C.muted}}>
-            {isOperator?<>{user?.employeeId||""} · {bucketT}t bucket · Target {OP.targetFillPct}% fill</>:<>{activeMine?.name||"Demo mode"} · {opsArr.length} operator{opsArr.length!==1?"s":""} today</>}
+            {isOperator?<>{user?.employeeId||""} · {bucketT}t bucket{crusher?` · target ${crusher.capacityTph} t/hr`:""}</>:<>{activeMine?.name||"Demo mode"} · {opsArr.length} operator{opsArr.length!==1?"s":""} · last {rangeDays}d</>}
           </div>
         </div>
         <div style={{textAlign:"right",flexShrink:0}}>
@@ -1093,77 +1330,63 @@ function ProductionScreen({user,activeMine,activeShiftId,machineId,role,allMachi
     </div>
 
     <div style={{padding:"12px 15px"}}>
-      {tab==="scoops"&&<div>
-        {/* Top summary card */}
-        <div style={{background:C.card,border:`1.5px solid ${(isOperator?barCol:C.accent)}44`,borderRadius:14,padding:"13px 15px",marginBottom:12}}>
+      {tab==="prod"&&<div>
+        {isOperator&&activeShiftId&&!hasOwnEntryToday&&<button onClick={()=>setEndModalOpen(true)}
+          style={{width:"100%",background:`linear-gradient(135deg,${C.accent},#e09520)`,color:"#000",border:"none",borderRadius:14,padding:"16px",fontFamily:F,fontWeight:900,fontSize:20,letterSpacing:".04em",boxShadow:`0 4px 24px ${C.accent}44`,marginBottom:12,cursor:"pointer"}}>
+          ✅ END SHIFT · LOG TODAY'S TONNES
+          <div style={{fontSize:11,fontWeight:600,marginTop:3,opacity:.8}}>{vlConnected?"VisionLink prefill ready":"Enter your day total"}</div>
+        </button>}
+        {isOperator&&hasOwnEntryToday&&<div style={{background:`${C.success}10`,border:`1px solid ${C.success}33`,borderRadius:12,padding:"12px 14px",marginBottom:12}}>
+          <div style={{fontFamily:F,fontWeight:700,fontSize:11,color:C.success,letterSpacing:".06em",textTransform:"uppercase",marginBottom:4}}>✓ Today logged</div>
+          <div style={{fontSize:12,color:C.textSub}}>{myToday.toLocaleString()} t recorded for today. Next shift opens at sign-in.</div>
+        </div>}
+
+        <div style={{background:C.card,border:`1.5px solid ${C.accent}33`,borderRadius:14,padding:"13px 15px",marginBottom:10}}>
           <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
             <div>
-              <div style={{fontSize:9,color:C.muted,fontFamily:F,fontWeight:700,letterSpacing:".08em",textTransform:"uppercase",marginBottom:3}}>{isOperator?"My t/hr":"Mine t/hr"}</div>
-              <div style={{fontFamily:F,fontWeight:900,fontSize:46,color:isOperator?barCol:C.accent,lineHeight:1}}>{isOperator?tph:mineTph}</div>
-              <div style={{fontSize:11,color:C.muted,marginTop:4}}>{isOperator?`vs ${crusher?.capacityTph||"—"} t/hr cap`:`${mineTotalT.toLocaleString()}t today · ${opsArr.length} ops`}</div>
+              <div style={{fontSize:9,color:C.muted,fontFamily:F,fontWeight:700,letterSpacing:".08em",textTransform:"uppercase",marginBottom:3}}>{isOperator?"My tonnes today":"Mine total today"}</div>
+              <div style={{fontFamily:F,fontWeight:900,fontSize:42,color:C.accent,lineHeight:1}}>{(isOperator?myToday:mineToday).toLocaleString()}<span style={{fontSize:18,color:C.muted,fontWeight:400}}> t</span></div>
+              <div style={{fontSize:11,color:C.muted,marginTop:4}}>{isOperator?(myDaysWithData?`${rangeDays}d avg ${myAvg.toLocaleString()} t/day`:"No prior history yet"):`${todayOps} operator${todayOps!==1?"s":""} logged`}</div>
             </div>
             <div style={{textAlign:"right",paddingTop:4}}>
-              {isOperator?(gap>0
-                ?<div style={{background:`${C.danger}12`,border:`1px solid ${C.danger}30`,borderRadius:9,padding:"8px 12px"}}><div style={{fontFamily:F,fontWeight:900,fontSize:18,color:C.danger}}>-{gap.toFixed(0)} t/hr</div><div style={{fontSize:10,color:C.muted,marginTop:2}}>{fmt$(gap*OP.revenuePerTonne*8)} / shift</div></div>
-                :<div style={{background:`${C.success}12`,border:`1px solid ${C.success}30`,borderRadius:9,padding:"8px 12px"}}><div style={{fontFamily:F,fontWeight:900,fontSize:18,color:C.success}}>✓ At cap</div></div>)
-              :<div style={{background:`${C.info}10`,border:`1px solid ${C.info}30`,borderRadius:9,padding:"8px 12px"}}><div style={{fontFamily:F,fontWeight:900,fontSize:16,color:C.info}}>{shiftHours.toFixed(1)}h</div><div style={{fontSize:10,color:C.muted,marginTop:2}}>elapsed</div></div>}
+              <div style={{background:`${C.info}10`,border:`1px solid ${C.info}30`,borderRadius:9,padding:"8px 12px"}}>
+                <div style={{fontSize:9,color:C.muted,fontFamily:F,fontWeight:700,letterSpacing:".06em",textTransform:"uppercase"}}>{rangeDays}d total</div>
+                <div style={{fontFamily:F,fontWeight:900,fontSize:18,color:C.info,marginTop:2}}>{(isOperator?myRangeTotal:mineRangeTotal).toLocaleString()}<span style={{fontSize:11,color:C.muted,fontWeight:400}}> t</span></div>
+              </div>
             </div>
           </div>
-          {isOperator&&<div style={{marginTop:10}}><Bar value={tph} max={crusher?.capacityTph||320} color={barCol}/></div>}
         </div>
 
-        {/* Supervisor filter chips */}
+        <div style={{display:"flex",gap:6,marginBottom:10}}>
+          {[7,14,30].map(n=>{const active=rangeDays===n;return<button key={n} onClick={()=>setRangeDays(n)}
+            style={{flex:1,background:active?`${C.accent}22`:C.card,border:`1px solid ${active?C.accent:C.border}`,borderRadius:9,padding:"7px 0",color:active?C.accent:C.muted,fontFamily:F,fontWeight:700,fontSize:12,cursor:"pointer"}}>{n}d</button>;})}
+        </div>
+
         {!isOperator&&opsArr.length>1&&<div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:10}}>
           <button onClick={()=>setFilterOp(null)} style={{background:filterOp===null?`${C.accent}22`:C.card,border:`1px solid ${filterOp===null?C.accent:C.border}`,borderRadius:99,padding:"5px 11px",color:filterOp===null?C.accent:C.muted,fontSize:11,fontFamily:F,fontWeight:700,cursor:"pointer"}}>All ({opsArr.length})</button>
           {opsArr.map((o,i)=>{
             const col=SERIES_COLORS[i%SERIES_COLORS.length];
             const active=filterOp===o.operatorId;
-            return<button key={o.operatorId} onClick={()=>setFilterOp(active?null:o.operatorId)} style={{background:active?`${col}22`:C.card,border:`1px solid ${active?col:C.border}`,borderRadius:99,padding:"5px 11px",color:active?col:C.textSub,fontSize:11,fontFamily:F,fontWeight:700,cursor:"pointer",display:"flex",alignItems:"center",gap:5}}>
+            return<button key={o.operatorId} onClick={()=>setFilterOp(active?null:o.operatorId)}
+              style={{background:active?`${col}22`:C.card,border:`1px solid ${active?col:C.border}`,borderRadius:99,padding:"5px 11px",color:active?col:C.textSub,fontSize:11,fontFamily:F,fontWeight:700,cursor:"pointer",display:"flex",alignItems:"center",gap:5}}>
               <span style={{width:8,height:8,borderRadius:"50%",background:col,display:"inline-block"}}/>{o.name.split(" ")[0]}
             </button>;
           })}
         </div>}
 
-        {/* Charts */}
-        <LineChart title="Scoop Size" yLabel="t" series={tonnesSeries} height={150}/>
-        <LineChart title="Cycle Time" yLabel="min" series={cycleSeries} height={150}/>
+        <BarChart days={days} series={tonnageSeries} title="Daily Tonnage" yLabel="t" height={180} emptyMessage={isOperator?"sign off a shift to start your history":"no operators have logged shifts yet"}/>
 
-        {/* Operator stats row */}
-        {isOperator&&<div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:5,marginTop:8,marginBottom:10}}>
-          <Stat label="Scoops" value={myPoints.length} color={C.accent} small/>
-          <Stat label="Material" value={`${totalT}t`} color={C.success} small/>
-          <Stat label="Avg Cycle" value={avgCyc?`${avgCyc}m`:"—"} color={avgCyc&&avgCyc<2.5?C.success:C.amber} small/>
-        </div>}
-
-        {/* Manual entry — operator + !vl only */}
-        {isOperator&&!vlConnected&&<>
-          <div style={{marginBottom:10,marginTop:6}}>
-            <div style={{fontSize:10,color:C.muted,marginBottom:6,letterSpacing:".06em",textTransform:"uppercase",fontFamily:F,fontWeight:700}}>Manual entry · scoop size</div>
-            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr 1fr",gap:7}}>
-              {SIZES.map(s=>{const active=sel===s.key;return<button key={s.key} onClick={()=>setSel(s.key)} style={{background:active?`${C.accent}22`:"transparent",border:`2px solid ${active?C.accent:C.border}`,borderRadius:11,padding:"11px 3px",color:active?C.accent:C.muted,textAlign:"center",cursor:"pointer"}}><div style={{fontFamily:F,fontWeight:900,fontSize:20}}>{s.icon}</div><div style={{fontSize:10,fontFamily:F,fontWeight:700,marginTop:3}}>{s.label}</div><div style={{fontSize:9,color:active?C.accent:C.muted,marginTop:2}}>{s.pct}%·{(bucketT*s.pct/100).toFixed(1)}t</div></button>;})}
-            </div>
-          </div>
-          <button onClick={logScoop} className={pop?"pop":""} style={{width:"100%",background:`linear-gradient(135deg,${C.accent},#e09520)`,color:"#000",border:"none",borderRadius:14,padding:"16px",fontFamily:F,fontWeight:900,fontSize:22,letterSpacing:".04em",boxShadow:`0 4px 24px ${C.accent}44`,marginBottom:10,cursor:"pointer"}}>
-            🪣 LOG SCOOP<div style={{fontSize:12,fontWeight:600,marginTop:3,opacity:.8}}>#{myPoints.length+1} · {(bucketT*selSz.pct/100).toFixed(2)}t · {selSz.label}</div>
-          </button>
-        </>}
-
-        {/* VL-connected info card */}
-        {isOperator&&vlConnected&&<div style={{background:`${C.success}10`,border:`1px solid ${C.success}33`,borderRadius:11,padding:"12px 14px",marginTop:6,marginBottom:10}}>
-          <div style={{fontFamily:F,fontWeight:700,fontSize:11,color:C.success,letterSpacing:".06em",textTransform:"uppercase",marginBottom:4}}>● VisionLink connected</div>
-          <div style={{fontSize:12,color:C.textSub,lineHeight:1.5}}>Scoop and cycle data flow automatically from this machine's API. Manual entry is disabled.</div>
-        </div>}
-
-        {/* Idle simulation — operator only */}
-        {isOperator&&<div style={{marginTop:6,background:`${C.danger}08`,border:`1px solid ${C.danger}22`,borderRadius:10,padding:"12px 14px"}}>
-          <div style={{fontSize:10,color:C.danger,fontFamily:F,fontWeight:700,marginBottom:6}}>⚡ IDLE DETECTION · {OP.idleAlertMins}min · DEMO: 1 sec ≈ 1 min</div>
-          <button onClick={startIdle} disabled={simOn} style={{background:simOn?C.border:C.danger,color:simOn?C.muted:"#fff",border:"none",borderRadius:8,padding:"9px 16px",fontSize:13,fontFamily:F,fontWeight:700,cursor:simOn?"default":"pointer"}}>{simOn?`⏱ Running… ${idleMins}/${OP.idleAlertMins}min`:"Simulate Idle Alert"}</button>
-        </div>}
+        <LineChart title={vlConnected||demoMode?"Cycle Time (today)":"Cycle Time"} yLabel="min" series={cycleSeries} height={140}/>
+        {!vlConnected&&!demoMode&&cycleSeries.length===0&&<div style={{fontSize:10,color:C.muted,textAlign:"center",marginTop:-2,marginBottom:8,padding:"0 12px",lineHeight:1.5}}>Cycle time auto-populates from VisionLink-connected machines.</div>}
       </div>}
 
       {tab==="log"&&isOperator&&<div>
         <div style={{fontFamily:F,fontWeight:700,fontSize:12,color:C.muted,letterSpacing:".06em",textTransform:"uppercase",marginBottom:10}}>Downtime Log</div>
         {events.length===0?<Card><div style={{fontSize:13,color:C.success,textAlign:"center",padding:16}}>✓ No downtime events this shift</div></Card>:events.map((e,i)=>{const dc=DT_CATS[e.cat];return<div key={i} style={{background:C.card,border:`1px solid ${e.flagged?C.amber:dc?.fault?C.danger:C.border}33`,borderLeft:`4px solid ${e.flagged?C.amber:dc?.fault?C.danger:C.muted}`,borderRadius:12,padding:"12px 14px",marginBottom:8}}><div style={{display:"flex",gap:10,alignItems:"flex-start"}}><span style={{fontSize:20,flexShrink:0}}>{dc?.icon}</span><div style={{flex:1}}><div style={{fontFamily:F,fontWeight:700,fontSize:14}}>{dc?.label}</div><div style={{fontSize:11,color:C.muted,marginTop:2}}>{e.time} · {(e.hrs*60).toFixed(0)}min{e.note?` · "${e.note}"`:""}</div></div>{(dc?.fault||e.flagged)&&<Pill label={e.flagged?"FLAGGED":"OP FAULT"} color={e.flagged?C.amber:C.danger}/>}</div></div>;})}
+        <div style={{marginTop:14,background:`${C.danger}08`,border:`1px solid ${C.danger}22`,borderRadius:10,padding:"12px 14px"}}>
+          <div style={{fontSize:10,color:C.danger,fontFamily:F,fontWeight:700,marginBottom:6}}>⚡ IDLE DETECTION · {OP.idleAlertMins}min · DEMO: 1 sec ≈ 1 min</div>
+          <button onClick={startIdle} disabled={simOn} style={{background:simOn?C.border:C.danger,color:simOn?C.muted:"#fff",border:"none",borderRadius:8,padding:"9px 16px",fontSize:13,fontFamily:F,fontWeight:700,cursor:simOn?"default":"pointer"}}>{simOn?`⏱ Running… ${idleMins}/${OP.idleAlertMins}min`:"Simulate Idle Alert"}</button>
+        </div>
       </div>}
 
       {tab==="blast"&&<div>
@@ -3711,7 +3934,7 @@ function MineOpsApp() {
     if(flow==="tickets")return <HandoverTicketsScreen activeMine={activeMine} user={user} allMachines={allMachines} onCreate={()=>setFlow("reportIssue")} onSelect={t=>{window.__currentTicketId=t.id;setFlow("ticketDetail");}} onBack={()=>setFlow("app")}/>
     if(flow==="ticketDetail")return <TicketDetailScreen ticketId={window.__currentTicketId} activeMine={activeMine} user={user} allMachines={allMachines} onBack={()=>setFlow("tickets")}/>
     if(flow==="plants")return <PlantsAdminScreen activeMine={activeMine} onBack={()=>setFlow("settings")}/>
-    if(tab==="ops")return <ProductionScreen user={user} activeMine={activeMine} activeShiftId={activeShiftId} machineId={user?.machine} role={user?.role} allMachines={allMachines} remoteOperators={remoteOperators}/>
+    if(tab==="ops")return <ProductionScreen user={user} activeMine={activeMine} activeShiftId={activeShiftId} machineId={user?.machine} role={user?.role} allMachines={allMachines} remoteOperators={remoteOperators} onShiftEnded={()=>setActiveShiftId(null)}/>
     if(tab==="checks")return <ChecksHub allMachines={allMachines} catDemo={catDemo} activeMine={activeMine} activeShiftId={activeShiftId} user={user}/>
     if(tab==="perf")return <MachinePerformanceScreen allMachines={allMachines} custPerfData={custPerfData}/>
     if(tab==="intel")return <IntelligenceHub/>
