@@ -1,5 +1,5 @@
 import { createClient } from '@supabase/supabase-js'
-import {createContext, useContext, useEffect, useState, useRef} from "react"
+import {createContext, useContext, useEffect, useMemo, useState, useRef} from "react"
 const supabase = createClient(import.meta.env.VITE_SUPABASE_URL, import.meta.env.VITE_SUPABASE_ANON_KEY)
 const AuthCtx = createContext(null)
 function AuthProvider({ children }) {
@@ -775,36 +775,296 @@ function MachinePerformanceScreen({allMachines,custPerfData}){
   </div>;
 }
 
-// ── Scoop Logger ──────────────────────────────────────────────────────────
+// ── Production Monitoring ─────────────────────────────────────────────────
+// Replaces the legacy ScoopLoggerScreen. Two stacked line charts (size + cycle
+// over time) + role-aware data. VL-connected machines flow data automatically
+// from scoop_logs (Edge Function writes); machines without VL get a manual
+// fallback button.
 
+const SERIES_COLORS=[C.accent,C.success,C.info,C.purple,C.amber,"#ec4899","#22d3ee","#f97316"];
 
+// Parse "HH:MM" (from SHIFT_TIMELINE) into today's epoch ms.
+function _hmToToday(hm){
+  const[h,m]=hm.split(":").map(Number);
+  const d=new Date();d.setHours(h,m,0,0);
+  return d.getTime();
+}
 
-function ScoopLoggerScreen({user,activeMine,activeShiftId,machineId}){
-  const machine=BASE_MACHINES.find(m=>m.id===user?.machine),crusher=OP.crushers.find(c=>c.id===user?.crusherAssigned),bucketT=machine?.bucket||7.5;
-  const[scoops,setScoops]=useState([]);const[sel,setSel]=useState("full");const[pop,setPop]=useState(false);const[tab,setTab]=useState("scoops");const[events,setEvents]=useState([]);
-  const[idleVis,setIdleVis]=useState(false);const[idleMins,setIdleMins]=useState(0);const[simOn,setSimOn]=useState(false);const[idleNote,setIdleNote]=useState("");
-  const[tick,setTick]=useState(0);
-  const shiftStart=useRef(Date.now()-3*3600*1000);const firstScoop=useRef(null);const lastTap=useRef(null);const idleRef=useRef(null);const tickRef=useRef(null);
-  useEffect(()=>{tickRef.current=setInterval(()=>setTick(n=>n+1),15000);return()=>{clearInterval(tickRef.current);clearInterval(idleRef.current);};},[]);
-  const logScoop=async()=>{const sz=SIZES.find(s=>s.key===sel),tonnes=+(bucketT*(sz.pct/100)).toFixed(2),now=Date.now(),cycle=lastTap.current?+((now-lastTap.current)/60000).toFixed(2):null;if(!firstScoop.current)firstScoop.current=now;lastTap.current=now;setPop(true);setTimeout(()=>setPop(false),220);setScoops(p=>[...p,{size:sel,tonnes,pct:sz.pct,cycle,t:now}]);if(activeMine?.id&&activeShiftId&&machineId){try{const{error}=await supabase.from("scoop_logs").insert({mine_id:activeMine.id,shift_id:activeShiftId,machine_id:machineId,size:sel,fill_pct:sz.pct,tonnes,cycle_time_min:cycle,logged_at:new Date().toISOString()});if(error)console.error("scoop insert:",error);}catch(e){console.error("scoop exception:",e);}}};
-  const rateBase=firstScoop.current?Math.max((Date.now()-firstScoop.current)/3600000,.05):null;
-  const shiftElapsedH=((Date.now()-shiftStart.current)/3600000).toFixed(1);
-  const totalT=+scoops.reduce((a,s)=>a+s.tonnes,0).toFixed(1);
-  const sphr=scoops.length&&rateBase?+(scoops.length/rateBase).toFixed(1):0;
-  const avgFill=scoops.length?Math.round(scoops.reduce((a,s)=>a+s.pct,0)/scoops.length):0;
-  const avgScT=scoops.length?+(totalT/scoops.length).toFixed(2):0;
-  const cycles=scoops.map(s=>s.cycle).filter(Boolean);
+// Collapse raw scoop points into N-minute buckets (mean per bucket).
+function bucketize(points,minutes=5){
+  if(!points||points.length===0)return[];
+  const ms=minutes*60000;
+  const buckets=new Map();
+  for(const p of points){
+    const key=Math.floor(p.t/ms)*ms;
+    if(!buckets.has(key))buckets.set(key,{t:key,tonnesSum:0,cycleSum:0,cycleN:0,n:0});
+    const b=buckets.get(key);
+    b.tonnesSum+=p.tonnes||0;b.n++;
+    if(p.cycle){b.cycleSum+=p.cycle;b.cycleN++;}
+  }
+  return[...buckets.values()].sort((a,b)=>a.t-b.t).map(b=>({
+    t:b.t,
+    tonnes:+(b.tonnesSum/b.n).toFixed(2),
+    cycle:b.cycleN?+(b.cycleSum/b.cycleN).toFixed(2):null,
+    n:b.n,
+  }));
+}
+
+// Stock-chart style line chart. series: [{id,name,color,points:[{t,v}]}]
+function LineChart({series,height=150,yLabel,title,yMin=0,yMax}){
+  const wrapRef=useRef(null);
+  const[w,setW]=useState(360);
+  const[hover,setHover]=useState(null);
+  useEffect(()=>{
+    if(!wrapRef.current)return;
+    const ro=new ResizeObserver(entries=>{
+      const cr=entries[0]?.contentRect;
+      if(cr)setW(Math.max(220,Math.floor(cr.width)));
+    });
+    ro.observe(wrapRef.current);
+    return()=>ro.disconnect();
+  },[]);
+  const PAD={l:34,r:10,t:8,b:22};
+  const innerW=w-PAD.l-PAD.r;
+  const innerH=height-PAD.t-PAD.b;
+  const all=series.flatMap(s=>s.points||[]);
+  if(all.length===0){
+    return<div ref={wrapRef} style={{width:"100%",height,background:C.surface,border:`1px solid ${C.border}`,borderRadius:10,display:"flex",alignItems:"center",justifyContent:"center",marginBottom:8}}>
+      <div style={{fontSize:10,color:C.muted,fontFamily:F,fontWeight:700,letterSpacing:".08em",textTransform:"uppercase"}}>{title||yLabel} · no data yet</div>
+    </div>;
+  }
+  const tMin=Math.min(...all.map(p=>p.t));
+  const tMax=Math.max(...all.map(p=>p.t));
+  const tSpan=Math.max(tMax-tMin,60000);
+  const vMaxRaw=yMax??Math.max(...all.map(p=>p.v));
+  const vMin=yMin;
+  const vMax=Math.max(vMaxRaw*1.1,vMin+0.1);
+  const sx=t=>PAD.l+((t-tMin)/tSpan)*innerW;
+  const sy=v=>PAD.t+(1-(v-vMin)/(vMax-vMin))*innerH;
+  const fmtTime=t=>{const d=new Date(t);return`${String(d.getHours()).padStart(2,"0")}:${String(d.getMinutes()).padStart(2,"0")}`;};
+  const fmtVal=v=>v>=100?Math.round(v).toString():v.toFixed(1);
+  const xTicks=tSpan>120000?[tMin,tMin+tSpan/2,tMax]:[tMin,tMax];
+  const yTicks=[vMin,(vMin+vMax)/2,vMax];
+  return<div ref={wrapRef} style={{position:"relative",width:"100%",marginBottom:8}}>
+    {title&&<div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline",padding:"0 4px 4px"}}>
+      <div style={{fontSize:9,color:C.muted,fontFamily:F,fontWeight:700,letterSpacing:".1em",textTransform:"uppercase"}}>{title}</div>
+      {yLabel&&<div style={{fontSize:9,color:C.muted,fontFamily:F,fontWeight:700,letterSpacing:".08em"}}>{yLabel}</div>}
+    </div>}
+    <svg width={w} height={height} style={{display:"block",background:C.surface,border:`1px solid ${C.border}`,borderRadius:10}}>
+      {yTicks.map((v,i)=><g key={`y${i}`}>
+        <line x1={PAD.l} x2={w-PAD.r} y1={sy(v)} y2={sy(v)} stroke={C.border} strokeWidth={0.5} opacity={0.6}/>
+        <text x={PAD.l-4} y={sy(v)+3} textAnchor="end" style={{fontSize:9,fill:C.muted,fontFamily:F}}>{fmtVal(v)}</text>
+      </g>)}
+      {xTicks.map((t,i)=><text key={`x${i}`} x={sx(t)} y={height-6} textAnchor={i===0?"start":i===xTicks.length-1?"end":"middle"} style={{fontSize:9,fill:C.muted,fontFamily:F}}>{fmtTime(t)}</text>)}
+      {series.map(s=>{
+        const pts=(s.points||[]).filter(p=>p.v!=null).sort((a,b)=>a.t-b.t);
+        if(pts.length===0)return null;
+        const d=pts.map((p,i)=>`${i===0?"M":"L"} ${sx(p.t)} ${sy(p.v)}`).join(" ");
+        const last=pts[pts.length-1];
+        return<g key={s.id}>
+          <path d={d} fill="none" stroke={s.color} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" opacity={0.95}/>
+          {pts.map((p,i)=><circle key={i} cx={sx(p.t)} cy={sy(p.v)} r={2.5} fill={s.color}
+            onMouseEnter={()=>setHover({x:sx(p.t),y:sy(p.v),v:p.v,name:s.name,t:p.t,color:s.color})}
+            onMouseLeave={()=>setHover(null)}
+            onTouchStart={()=>setHover({x:sx(p.t),y:sy(p.v),v:p.v,name:s.name,t:p.t,color:s.color})}
+            style={{cursor:"pointer"}}
+          />)}
+          <circle cx={sx(last.t)} cy={sy(last.v)} r={4.5} fill={s.color} opacity={0.35}/>
+          <circle cx={sx(last.t)} cy={sy(last.v)} r={3} fill={s.color}/>
+        </g>;
+      })}
+    </svg>
+    {hover&&<div style={{position:"absolute",left:Math.min(hover.x+10,w-140),top:Math.max(hover.y-30,0),background:C.bg,border:`1px solid ${hover.color}66`,borderRadius:7,padding:"5px 9px",fontSize:10,fontFamily:F,fontWeight:700,color:C.text,pointerEvents:"none",whiteSpace:"nowrap",zIndex:5,boxShadow:"0 4px 16px rgba(0,0,0,.4)"}}>
+      <div style={{color:hover.color,marginBottom:1}}>{hover.name}</div>
+      <div>{fmtVal(hover.v)}{yLabel?` ${yLabel}`:""} · {fmtTime(hover.t)}</div>
+    </div>}
+  </div>;
+}
+
+// Hook: load shift production data — operator scope (own shift) or supervisor
+// scope (all of today's shifts at this mine). Polls every 15 s. Demo mode
+// (no real mine) falls back to SHIFT_TIMELINE.
+function useShiftProduction({activeMine,role,userId,remoteOperators,localScoops,activeMachineId}){
+  const[byOperator,setByOperator]=useState(()=>new Map());
+  const[lastSync,setLastSync]=useState(null);
+  const lv=ROLES[role]?.level||1;
+  const opsLen=(remoteOperators||[]).length;
+
+  useEffect(()=>{
+    // Demo mode → synthesize from SHIFT_TIMELINE + LIVE_OPS
+    if(!activeMine?.id){
+      const m=new Map();
+      const targetUsers=lv===1
+        ?USERS.filter(u=>u.id===userId&&u.role==="operator")
+        :USERS.filter(u=>u.role==="operator"&&LIVE_OPS[u.id]);
+      for(const u of targetUsers){
+        const mach=BASE_MACHINES.find(x=>x.id===u.machine);
+        const bT=mach?.bucket||mach?.payload||7;
+        const cyc=LIVE_OPS[u.id]?.cycleMin||3;
+        const pts=[];
+        for(const row of SHIFT_TIMELINE){
+          const tphV=row[u.id]||0;
+          if(row.idle||tphV===0)continue;
+          const fill=0.88+Math.random()*0.1;
+          pts.push({t:_hmToToday(row.t),tonnes:+(bT*fill).toFixed(2),cycle:+(cyc+(Math.random()-0.5)*0.3).toFixed(2),machineId:u.machine});
+        }
+        m.set(u.id,{operatorId:u.id,name:u.name,points:pts});
+      }
+      setByOperator(m);setLastSync(Date.now());
+      return;
+    }
+
+    let cancelled=false;
+    const fetchProduction=async()=>{
+      try{
+        const startOfToday=new Date();startOfToday.setHours(0,0,0,0);
+        let sQuery=supabase.from("shifts")
+          .select("id,operator_id")
+          .eq("mine_id",activeMine.id)
+          .gte("shift_start",startOfToday.toISOString());
+        if(lv===1&&userId)sQuery=sQuery.eq("operator_id",userId);
+        const{data:shifts,error:sErr}=await sQuery;
+        if(sErr)throw sErr;
+        const shiftIds=(shifts||[]).map(s=>s.id);
+        const shiftToOp=new Map((shifts||[]).map(s=>[s.id,s.operator_id]));
+        if(shiftIds.length===0){
+          if(!cancelled){setByOperator(new Map());setLastSync(Date.now());}
+          return;
+        }
+        const{data:logs,error:lErr}=await supabase.from("scoop_logs")
+          .select("shift_id,machine_id,tonnes,cycle_time_min,logged_at")
+          .in("shift_id",shiftIds)
+          .order("logged_at",{ascending:true});
+        if(lErr)throw lErr;
+        const opNameById=new Map((remoteOperators||[]).map(o=>[o.id,o.name]));
+        const result=new Map();
+        for(const log of logs||[]){
+          const opId=shiftToOp.get(log.shift_id)||"unknown";
+          if(!result.has(opId))result.set(opId,{operatorId:opId,name:opNameById.get(opId)||"Operator",points:[]});
+          result.get(opId).points.push({t:new Date(log.logged_at).getTime(),tonnes:log.tonnes,cycle:log.cycle_time_min,machineId:log.machine_id});
+        }
+        if(!cancelled){setByOperator(result);setLastSync(Date.now());}
+      }catch(e){console.error("useShiftProduction:",e);}
+    };
+    fetchProduction();
+    const iv=setInterval(fetchProduction,15000);
+    return()=>{cancelled=true;clearInterval(iv);};
+  },[activeMine?.id,role,userId,lv,opsLen]);
+
+  // Merge optimistic local scoops (de-dup by t within 5 s).
+  const merged=useMemo(()=>{
+    if(!localScoops?.length||!userId)return byOperator;
+    const m=new Map(byOperator);
+    const existing=m.get(userId)||{operatorId:userId,name:"You",points:[]};
+    const points=[...existing.points];
+    for(const s of localScoops){
+      const dup=points.some(p=>Math.abs(p.t-s.t)<5000);
+      if(!dup)points.push({t:s.t,tonnes:s.tonnes,cycle:s.cycle,machineId:activeMachineId});
+    }
+    m.set(userId,{...existing,points});
+    return m;
+  },[byOperator,localScoops,userId,activeMachineId]);
+
+  return{byOperator:merged,lastSync,demoMode:!activeMine?.id};
+}
+
+// ── Production Screen ─────────────────────────────────────────────────────
+function ProductionScreen({user,activeMine,activeShiftId,machineId,role,allMachines,remoteOperators}){
+  const lv=ROLES[role]?.level||1;
+  const isOperator=lv===1;
+  const remoteMachine=(allMachines||[]).find(m=>m.id===machineId);
+  const demoMachine=BASE_MACHINES.find(m=>m.id===(machineId||user?.machine));
+  const machine=remoteMachine||demoMachine;
+  const crusher=OP.crushers.find(c=>c.id===(machine?.crusher_assigned||machine?.crusherAssigned||user?.crusherAssigned));
+  const bucketT=machine?.bucket_size??machine?.bucket??machine?.payload??7.5;
+  const vlConnected=!!machine?.vl_connected;
+
+  const[tab,setTab]=useState("scoops");
+  const[sel,setSel]=useState("full");
+  const[pop,setPop]=useState(false);
+  const[localScoops,setLocalScoops]=useState([]);
+  const[events,setEvents]=useState([]);
+  const[idleVis,setIdleVis]=useState(false);
+  const[idleMins,setIdleMins]=useState(0);
+  const[simOn,setSimOn]=useState(false);
+  const[idleNote,setIdleNote]=useState("");
+  const[filterOp,setFilterOp]=useState(null);
+  const shiftStart=useRef(Date.now()-3*3600*1000);
+  const lastTap=useRef(null);
+  const idleRef=useRef(null);
+  useEffect(()=>()=>clearInterval(idleRef.current),[]);
+
+  const{byOperator,lastSync,demoMode}=useShiftProduction({
+    activeMine,role,userId:user?.id,
+    remoteOperators,localScoops,activeMachineId:machineId||user?.machine,
+  });
+
+  const opsArr=[...byOperator.values()];
+  const visibleOps=isOperator
+    ?opsArr.filter(o=>o.operatorId===user?.id)
+    :(filterOp?opsArr.filter(o=>o.operatorId===filterOp):opsArr);
+  const tonnesSeries=visibleOps.map(o=>({
+    id:`${o.operatorId}-t`,
+    name:o.name,
+    color:isOperator?C.accent:SERIES_COLORS[opsArr.indexOf(o)%SERIES_COLORS.length],
+    points:bucketize(o.points,5).map(b=>({t:b.t,v:b.tonnes})),
+  }));
+  const cycleSeries=visibleOps.map(o=>({
+    id:`${o.operatorId}-c`,
+    name:o.name,
+    color:isOperator?C.info:SERIES_COLORS[opsArr.indexOf(o)%SERIES_COLORS.length],
+    points:bucketize(o.points,5).filter(b=>b.cycle!=null).map(b=>({t:b.t,v:b.cycle})),
+  }));
+
+  const myData=byOperator.get(user?.id);
+  const myPoints=myData?.points||[];
+  const totalT=+myPoints.reduce((a,p)=>a+(p.tonnes||0),0).toFixed(1);
+  const cycles=myPoints.map(p=>p.cycle).filter(Boolean);
   const avgCyc=cycles.length?+(cycles.reduce((a,c)=>a+c,0)/cycles.length).toFixed(2):null;
-  const lastCyc=cycles.length?cycles[cycles.length-1]:null;
-  const tph=scoops.length?+(sphr*avgScT).toFixed(1):0;
+  const shiftHours=Math.max((Date.now()-shiftStart.current)/3600000,0.05);
+  const tph=myPoints.length?+(totalT/shiftHours).toFixed(1):0;
   const gap=crusher?Math.max(0,crusher.capacityTph-tph):0;
-  const fillPct=crusher&&tph?Math.min(100,(tph/crusher.capacityTph)*100):0;const barCol=fillPct>=95?C.success:fillPct>=80?C.accent:C.danger;const selSz=SIZES.find(s=>s.key===sel);
+  const fillPct=crusher&&tph?Math.min(100,(tph/crusher.capacityTph)*100):0;
+  const barCol=fillPct>=95?C.success:fillPct>=80?C.accent:C.danger;
+  const selSz=SIZES.find(s=>s.key===sel);
+
+  const allPoints=opsArr.flatMap(o=>o.points);
+  const mineTotalT=+allPoints.reduce((a,p)=>a+(p.tonnes||0),0).toFixed(1);
+  const mineTph=allPoints.length?+(mineTotalT/shiftHours).toFixed(1):0;
+
+  const logScoop=async()=>{
+    const sz=SIZES.find(s=>s.key===sel);
+    const tonnes=+(bucketT*(sz.pct/100)).toFixed(2);
+    const now=Date.now();
+    const cycle=lastTap.current?+((now-lastTap.current)/60000).toFixed(2):null;
+    lastTap.current=now;
+    setPop(true);setTimeout(()=>setPop(false),220);
+    setLocalScoops(p=>[...p,{size:sel,tonnes,pct:sz.pct,cycle,t:now}]);
+    const mid=machineId||user?.machine;
+    if(activeMine?.id&&activeShiftId&&mid){
+      try{
+        const{error}=await supabase.from("scoop_logs").insert({
+          mine_id:activeMine.id,shift_id:activeShiftId,machine_id:mid,
+          size:sel,fill_pct:sz.pct,tonnes,cycle_time_min:cycle,
+          logged_at:new Date(now).toISOString(),
+        });
+        if(error)console.error("scoop insert:",error);
+      }catch(e){console.error("scoop exception:",e);}
+    }
+  };
   const startIdle=()=>{if(simOn)return;setSimOn(true);let m=0;idleRef.current=setInterval(()=>{m++;setIdleMins(m);if(m>=OP.idleAlertMins){setIdleVis(true);clearInterval(idleRef.current);}},400);};
-  const logReason=async cat=>{const now=new Date();const durMin=+idleMins;const dc=DT_CATS[cat];setEvents(p=>[...p,{cat,hrs:+(idleMins/60).toFixed(2),time:`${String(now.getHours()).padStart(2,"0")}:${String(now.getMinutes()).padStart(2,"0")}`,note:idleNote}]);if(activeMine?.id&&activeShiftId&&machineId){try{const{error}=await supabase.from("downtime_logs").insert({mine_id:activeMine.id,shift_id:activeShiftId,machine_id:machineId,category:cat,duration_min:durMin,note:idleNote||null,is_operator_fault:!!(dc&&dc.fault),flagged_for_supervisor:false,logged_at:new Date().toISOString()});if(error)console.error("downtime insert:",error);}catch(e){console.error("downtime exception:",e);}}setIdleVis(false);setSimOn(false);setIdleMins(0);setIdleNote("");clearInterval(idleRef.current);};
-  const flagLater=async()=>{const now=new Date();const durMin=+idleMins;setEvents(p=>[...p,{cat:"other",hrs:+(idleMins/60).toFixed(2),time:`${String(now.getHours()).padStart(2,"0")}:${String(now.getMinutes()).padStart(2,"0")}`,note:"⚠ Reason not recorded — flagged for supervisor",flagged:true}]);if(activeMine?.id&&activeShiftId&&machineId){try{const{error}=await supabase.from("downtime_logs").insert({mine_id:activeMine.id,shift_id:activeShiftId,machine_id:machineId,category:"other",duration_min:durMin,note:"Reason not recorded — flagged for supervisor",is_operator_fault:false,flagged_for_supervisor:true,logged_at:new Date().toISOString()});if(error)console.error("downtime flag insert:",error);}catch(e){console.error("downtime flag exception:",e);}}setIdleVis(false);setSimOn(false);setIdleMins(0);clearInterval(idleRef.current);};
-  const tb=(t,ic,lb)=><button onClick={()=>setTab(t)} style={{flex:1,padding:"8px 0",background:"none",border:"none",color:tab===t?C.accent:C.muted,fontFamily:F,fontWeight:700,fontSize:9,borderBottom:`2px solid ${tab===t?C.accent:"transparent"}`,cursor:"pointer"}}><span style={{fontSize:13}}>{ic}</span>{" "}{lb}</button>;
-  return <div style={{paddingBottom:80}} className="up">
-    {idleVis&&<div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.85)",zIndex:300,display:"flex",alignItems:"flex-end"}}>
+  const logReason=async cat=>{const now=new Date();const durMin=+idleMins;const dc=DT_CATS[cat];setEvents(p=>[...p,{cat,hrs:+(idleMins/60).toFixed(2),time:`${String(now.getHours()).padStart(2,"0")}:${String(now.getMinutes()).padStart(2,"0")}`,note:idleNote}]);const mid=machineId||user?.machine;if(activeMine?.id&&activeShiftId&&mid){try{const{error}=await supabase.from("downtime_logs").insert({mine_id:activeMine.id,shift_id:activeShiftId,machine_id:mid,category:cat,duration_min:durMin,note:idleNote||null,is_operator_fault:!!(dc&&dc.fault),flagged_for_supervisor:false,logged_at:new Date().toISOString()});if(error)console.error("downtime insert:",error);}catch(e){console.error("downtime exception:",e);}}setIdleVis(false);setSimOn(false);setIdleMins(0);setIdleNote("");clearInterval(idleRef.current);};
+  const flagLater=async()=>{const now=new Date();const durMin=+idleMins;setEvents(p=>[...p,{cat:"other",hrs:+(idleMins/60).toFixed(2),time:`${String(now.getHours()).padStart(2,"0")}:${String(now.getMinutes()).padStart(2,"0")}`,note:"⚠ Reason not recorded — flagged for supervisor",flagged:true}]);const mid=machineId||user?.machine;if(activeMine?.id&&activeShiftId&&mid){try{const{error}=await supabase.from("downtime_logs").insert({mine_id:activeMine.id,shift_id:activeShiftId,machine_id:mid,category:"other",duration_min:durMin,note:"Reason not recorded — flagged for supervisor",is_operator_fault:false,flagged_for_supervisor:true,logged_at:new Date().toISOString()});if(error)console.error("downtime flag insert:",error);}catch(e){console.error("downtime flag exception:",e);}}setIdleVis(false);setSimOn(false);setIdleMins(0);clearInterval(idleRef.current);};
+
+  const subtabs=isOperator
+    ?[["scoops","📈","Production"],["log","📋","Downtime"],["blast","💥","Blast"]]
+    :[["scoops","📈","Production"],["blast","💥","Blast"]];
+  const tb=([t,ic,lb])=><button key={t} onClick={()=>setTab(t)} style={{flex:1,padding:"8px 0",background:"none",border:"none",color:tab===t?C.accent:C.muted,fontFamily:F,fontWeight:700,fontSize:9,borderBottom:`2px solid ${tab===t?C.accent:"transparent"}`,cursor:"pointer"}}><span style={{fontSize:13}}>{ic}</span>{" "}{lb}</button>;
+  const lastSyncLabel=lastSync?new Date(lastSync).toLocaleTimeString([],{hour:"2-digit",minute:"2-digit",hour12:false}):"—";
+
+  return<div style={{paddingBottom:80}} className="up">
+    {/* Idle modal — operators only */}
+    {isOperator&&idleVis&&<div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.85)",zIndex:300,display:"flex",alignItems:"flex-end"}}>
       <div style={{background:C.surface,borderTop:`3px solid ${C.danger}`,borderRadius:"18px 18px 0 0",padding:"20px 18px 28px",width:"100%",maxWidth:420,margin:"0 auto"}}>
         <div style={{textAlign:"center",marginBottom:16}}><div style={{fontFamily:F,fontWeight:900,fontSize:26,color:C.danger}}>🕒 IDLE {idleMins} MIN</div><div style={{fontSize:13,color:C.textSub,marginTop:4}}>Log the reason to continue.</div></div>
         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:12}}>{Object.entries(DT_CATS).map(([k,v])=><button key={k} onClick={()=>logReason(k)} style={{background:v.fault?`${C.danger}22`:C.card,border:`2px solid ${v.fault?C.danger:C.border}`,borderRadius:13,padding:"16px 10px",color:v.fault?C.danger:C.text,textAlign:"center",cursor:"pointer"}}><div style={{fontSize:28,marginBottom:6}}>{v.icon}</div><div style={{fontFamily:F,fontWeight:700,fontSize:14}}>{v.short}</div></button>)}</div>
@@ -812,35 +1072,103 @@ function ScoopLoggerScreen({user,activeMine,activeShiftId,machineId}){
         <button onClick={flagLater} style={{width:"100%",background:"transparent",border:`1px solid ${C.border}`,borderRadius:9,padding:"11px",color:C.muted,fontSize:12,fontFamily:F,fontWeight:600,cursor:"pointer"}}>Flag for later — supervisor will be notified</button>
       </div>
     </div>}
+
+    {/* Header */}
     <div style={{background:C.surface,borderBottom:`1px solid ${C.border}`,padding:"12px 15px"}}>
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
-        <div><div style={{fontFamily:F,fontWeight:900,fontSize:19,marginBottom:2}}>{machine?.model||"—"} <span style={{color:C.accent}}>· {crusher?.name||"—"}</span></div><div style={{fontSize:10,color:C.muted}}>{user?.employeeId} · {bucketT}t bucket · Target {OP.targetFillPct}% fill</div></div>
-        <div style={{textAlign:"right",flexShrink:0}}><div style={{fontSize:9,color:C.muted,fontFamily:F,fontWeight:700,letterSpacing:".06em",textTransform:"uppercase"}}>Shift</div><div style={{fontFamily:F,fontWeight:900,fontSize:16,color:C.muted}}>{shiftElapsedH}h</div></div>
+        <div>
+          <div style={{fontFamily:F,fontWeight:900,fontSize:19,marginBottom:2}}>
+            {isOperator?<>{machine?.model||"—"} <span style={{color:C.accent}}>· {crusher?.name||"—"}</span></>:"Mine Production"}
+          </div>
+          <div style={{fontSize:10,color:C.muted}}>
+            {isOperator?<>{user?.employeeId||""} · {bucketT}t bucket · Target {OP.targetFillPct}% fill</>:<>{activeMine?.name||"Demo mode"} · {opsArr.length} operator{opsArr.length!==1?"s":""} today</>}
+          </div>
+        </div>
+        <div style={{textAlign:"right",flexShrink:0}}>
+          <div style={{fontSize:9,color:C.muted,fontFamily:F,fontWeight:700,letterSpacing:".06em",textTransform:"uppercase"}}>{vlConnected?"VisionLink":"Manual"}</div>
+          <div style={{fontFamily:F,fontWeight:900,fontSize:13,color:vlConnected?C.success:C.amber,marginTop:2}}>{vlConnected?`● ${lastSyncLabel}`:demoMode?"Demo":`Sync ${lastSyncLabel}`}</div>
+        </div>
       </div>
-      <div style={{display:"flex",borderTop:`1px solid ${C.border}`,paddingTop:5,marginTop:9}}>{tb("scoops","🪣","Scoops")}{tb("log","📋","Log")}{tb("blast","💥","Blast")}</div>
+      <div style={{display:"flex",borderTop:`1px solid ${C.border}`,paddingTop:5,marginTop:9}}>{subtabs.map(tb)}</div>
     </div>
+
     <div style={{padding:"12px 15px"}}>
       {tab==="scoops"&&<div>
-        {scoops.length===0&&<div style={{background:`${C.accent}08`,border:`1px solid ${C.accent}22`,borderRadius:14,padding:"18px 16px",marginBottom:14,textAlign:"center"}}><div style={{fontSize:36,marginBottom:8}}>🪣</div><div style={{fontFamily:F,fontWeight:900,fontSize:18,color:C.accent,marginBottom:4}}>READY TO LOG</div><div style={{fontSize:12,color:C.muted,lineHeight:1.5}}>Select scoop size below, then tap LOG SCOOP after each bucket load.</div><div style={{display:"flex",gap:8,justifyContent:"center",marginTop:12}}><div style={{background:`${C.accent}15`,borderRadius:7,padding:"4px 10px",fontSize:10,color:C.accent,fontFamily:F,fontWeight:700}}>Cap: {crusher?.capacityTph} t/hr</div><div style={{background:`${C.info}15`,borderRadius:7,padding:"4px 10px",fontSize:10,color:C.info,fontFamily:F,fontWeight:700}}>Bucket: {bucketT}t</div></div></div>}
-        {scoops.length>0&&<div style={{background:C.card,border:`1.5px solid ${barCol}44`,borderRadius:14,padding:"13px 15px",marginBottom:12}}>
+        {/* Top summary card */}
+        <div style={{background:C.card,border:`1.5px solid ${(isOperator?barCol:C.accent)}44`,borderRadius:14,padding:"13px 15px",marginBottom:12}}>
           <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
-            <div><div style={{fontSize:9,color:C.muted,fontFamily:F,fontWeight:700,letterSpacing:".08em",textTransform:"uppercase",marginBottom:3}}>Live t/hr</div><div style={{fontFamily:F,fontWeight:900,fontSize:52,color:barCol,lineHeight:1}}>{tph}</div><div style={{fontSize:11,color:C.muted,marginTop:4}}>vs {crusher?.capacityTph} t/hr cap</div></div>
-            <div style={{textAlign:"right",paddingTop:4}}>{gap>0?<div style={{background:`${C.danger}12`,border:`1px solid ${C.danger}30`,borderRadius:9,padding:"8px 12px"}}><div style={{fontFamily:F,fontWeight:900,fontSize:18,color:C.danger}}>-{gap.toFixed(0)} t/hr</div><div style={{fontSize:10,color:C.muted,marginTop:2}}>{fmt$(gap*OP.revenuePerTonne*8)} / shift</div></div>:<div style={{background:`${C.success}12`,border:`1px solid ${C.success}30`,borderRadius:9,padding:"8px 12px"}}><div style={{fontFamily:F,fontWeight:900,fontSize:18,color:C.success}}>✓ Full cap</div></div>}</div>
+            <div>
+              <div style={{fontSize:9,color:C.muted,fontFamily:F,fontWeight:700,letterSpacing:".08em",textTransform:"uppercase",marginBottom:3}}>{isOperator?"My t/hr":"Mine t/hr"}</div>
+              <div style={{fontFamily:F,fontWeight:900,fontSize:46,color:isOperator?barCol:C.accent,lineHeight:1}}>{isOperator?tph:mineTph}</div>
+              <div style={{fontSize:11,color:C.muted,marginTop:4}}>{isOperator?`vs ${crusher?.capacityTph||"—"} t/hr cap`:`${mineTotalT.toLocaleString()}t today · ${opsArr.length} ops`}</div>
+            </div>
+            <div style={{textAlign:"right",paddingTop:4}}>
+              {isOperator?(gap>0
+                ?<div style={{background:`${C.danger}12`,border:`1px solid ${C.danger}30`,borderRadius:9,padding:"8px 12px"}}><div style={{fontFamily:F,fontWeight:900,fontSize:18,color:C.danger}}>-{gap.toFixed(0)} t/hr</div><div style={{fontSize:10,color:C.muted,marginTop:2}}>{fmt$(gap*OP.revenuePerTonne*8)} / shift</div></div>
+                :<div style={{background:`${C.success}12`,border:`1px solid ${C.success}30`,borderRadius:9,padding:"8px 12px"}}><div style={{fontFamily:F,fontWeight:900,fontSize:18,color:C.success}}>✓ At cap</div></div>)
+              :<div style={{background:`${C.info}10`,border:`1px solid ${C.info}30`,borderRadius:9,padding:"8px 12px"}}><div style={{fontFamily:F,fontWeight:900,fontSize:16,color:C.info}}>{shiftHours.toFixed(1)}h</div><div style={{fontSize:10,color:C.muted,marginTop:2}}>elapsed</div></div>}
+            </div>
           </div>
-          <div style={{marginTop:10}}><Bar value={tph} max={crusher?.capacityTph||320} color={barCol}/></div>
+          {isOperator&&<div style={{marginTop:10}}><Bar value={tph} max={crusher?.capacityTph||320} color={barCol}/></div>}
+        </div>
+
+        {/* Supervisor filter chips */}
+        {!isOperator&&opsArr.length>1&&<div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:10}}>
+          <button onClick={()=>setFilterOp(null)} style={{background:filterOp===null?`${C.accent}22`:C.card,border:`1px solid ${filterOp===null?C.accent:C.border}`,borderRadius:99,padding:"5px 11px",color:filterOp===null?C.accent:C.muted,fontSize:11,fontFamily:F,fontWeight:700,cursor:"pointer"}}>All ({opsArr.length})</button>
+          {opsArr.map((o,i)=>{
+            const col=SERIES_COLORS[i%SERIES_COLORS.length];
+            const active=filterOp===o.operatorId;
+            return<button key={o.operatorId} onClick={()=>setFilterOp(active?null:o.operatorId)} style={{background:active?`${col}22`:C.card,border:`1px solid ${active?col:C.border}`,borderRadius:99,padding:"5px 11px",color:active?col:C.textSub,fontSize:11,fontFamily:F,fontWeight:700,cursor:"pointer",display:"flex",alignItems:"center",gap:5}}>
+              <span style={{width:8,height:8,borderRadius:"50%",background:col,display:"inline-block"}}/>{o.name.split(" ")[0]}
+            </button>;
+          })}
         </div>}
-        <div style={{display:"flex",gap:5,marginBottom:7}}><Stat label="Scoops" value={scoops.length} color={C.accent}/><Stat label="Material" value={`${totalT}t`} color={C.success}/><Stat label="Scoops/hr" value={sphr||"—"} color={C.info}/></div>
-        {scoops.length>0&&<div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:5,marginBottom:10}}><Stat label="Avg Cycle" value={avgCyc?`${avgCyc}min`:"—"} color={avgCyc&&avgCyc<2.5?C.success:C.amber} small/><Stat label="Avg Fill" value={`${avgFill}%`} color={avgFill>=OP.targetFillPct?C.success:C.amber} small/><Stat label="Last Cycle" value={lastCyc?`${lastCyc}min`:"—"} color={lastCyc&&lastCyc<2.5?C.success:lastCyc?C.amber:C.muted} small/></div>}
-        <div style={{marginBottom:10}}><div style={{fontSize:10,color:C.muted,marginBottom:6}}>Scoop size</div><div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr 1fr",gap:7}}>{SIZES.map(s=>{const active=sel===s.key;return <button key={s.key} onClick={()=>setSel(s.key)} style={{background:active?`${C.accent}22`:"transparent",border:`2px solid ${active?C.accent:C.border}`,borderRadius:11,padding:"11px 3px",color:active?C.accent:C.muted,textAlign:"center",cursor:"pointer"}}><div style={{fontFamily:F,fontWeight:900,fontSize:20}}>{s.icon}</div><div style={{fontSize:10,fontFamily:F,fontWeight:700,marginTop:3}}>{s.label}</div><div style={{fontSize:9,color:active?C.accent:C.muted,marginTop:2}}>{s.pct}%·{(bucketT*s.pct/100).toFixed(1)}t</div></button>;})}</div></div>
-        <button onClick={logScoop} className={pop?"pop":""} style={{width:"100%",background:`linear-gradient(135deg,${C.accent},#e09520)`,color:"#000",border:"none",borderRadius:14,padding:"18px",fontFamily:F,fontWeight:900,fontSize:26,letterSpacing:".04em",boxShadow:`0 4px 24px ${C.accent}44`,marginBottom:10,cursor:"pointer"}}>🪣 LOG SCOOP<div style={{fontSize:13,fontWeight:600,marginTop:3,opacity:.8}}>#{scoops.length+1} · {(bucketT*selSz.pct/100).toFixed(2)}t · {selSz.label}</div></button>
-        {scoops.length>0&&<div style={{maxHeight:130,overflowY:"auto"}}><div style={{display:"grid",gridTemplateColumns:"auto 1fr auto auto auto",gap:"0 8px",padding:"3px 0",borderBottom:`1px solid ${C.border}`,marginBottom:3}}>{["#","Size","Fill","Tonnes","Cycle"].map(h=><div key={h} style={{fontSize:8,color:C.muted,fontFamily:F,fontWeight:700,textTransform:"uppercase"}}>{h}</div>)}</div>{[...scoops].reverse().slice(0,8).map((s,i)=>{const sz=SIZES.find(x=>x.key===s.size),fc=s.pct>=OP.targetFillPct?C.success:s.pct>=80?C.amber:C.danger,cc=s.cycle?s.cycle<2.5?C.success:s.cycle<5?C.amber:C.danger:C.muted;return <div key={i} style={{display:"grid",gridTemplateColumns:"auto 1fr auto auto auto",gap:"0 8px",padding:"5px 0",borderBottom:`1px solid ${C.border}22`,fontSize:12}}><span style={{fontFamily:F,fontWeight:700,color:C.muted}}>#{scoops.length-i}</span><span style={{fontFamily:F,fontWeight:700,color:fc}}>{sz?.label}</span><span style={{fontFamily:F,fontWeight:700,color:fc}}>{s.pct}%</span><span style={{color:C.muted}}>{s.tonnes}t</span><span style={{fontFamily:F,fontWeight:700,color:cc}}>{s.cycle?`${s.cycle}m`:"—"}</span></div>;})}
+
+        {/* Charts */}
+        <LineChart title="Scoop Size" yLabel="t" series={tonnesSeries} height={150}/>
+        <LineChart title="Cycle Time" yLabel="min" series={cycleSeries} height={150}/>
+
+        {/* Operator stats row */}
+        {isOperator&&<div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:5,marginTop:8,marginBottom:10}}>
+          <Stat label="Scoops" value={myPoints.length} color={C.accent} small/>
+          <Stat label="Material" value={`${totalT}t`} color={C.success} small/>
+          <Stat label="Avg Cycle" value={avgCyc?`${avgCyc}m`:"—"} color={avgCyc&&avgCyc<2.5?C.success:C.amber} small/>
         </div>}
-        <div style={{marginTop:14,background:`${C.danger}08`,border:`1px solid ${C.danger}22`,borderRadius:10,padding:"12px 14px"}}><div style={{fontSize:10,color:C.danger,fontFamily:F,fontWeight:700,marginBottom:6}}>⚡ IDLE DETECTION · {OP.idleAlertMins}min · DEMO: 1 sec ≈ 1 min</div><button onClick={startIdle} disabled={simOn} style={{background:simOn?C.border:C.danger,color:simOn?C.muted:"#fff",border:"none",borderRadius:8,padding:"9px 16px",fontSize:13,fontFamily:F,fontWeight:700,cursor:simOn?"default":"pointer"}}>{simOn?`⏱ Running… ${idleMins}/${OP.idleAlertMins}min`:"Simulate Idle Alert"}</button></div>
+
+        {/* Manual entry — operator + !vl only */}
+        {isOperator&&!vlConnected&&<>
+          <div style={{marginBottom:10,marginTop:6}}>
+            <div style={{fontSize:10,color:C.muted,marginBottom:6,letterSpacing:".06em",textTransform:"uppercase",fontFamily:F,fontWeight:700}}>Manual entry · scoop size</div>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr 1fr",gap:7}}>
+              {SIZES.map(s=>{const active=sel===s.key;return<button key={s.key} onClick={()=>setSel(s.key)} style={{background:active?`${C.accent}22`:"transparent",border:`2px solid ${active?C.accent:C.border}`,borderRadius:11,padding:"11px 3px",color:active?C.accent:C.muted,textAlign:"center",cursor:"pointer"}}><div style={{fontFamily:F,fontWeight:900,fontSize:20}}>{s.icon}</div><div style={{fontSize:10,fontFamily:F,fontWeight:700,marginTop:3}}>{s.label}</div><div style={{fontSize:9,color:active?C.accent:C.muted,marginTop:2}}>{s.pct}%·{(bucketT*s.pct/100).toFixed(1)}t</div></button>;})}
+            </div>
+          </div>
+          <button onClick={logScoop} className={pop?"pop":""} style={{width:"100%",background:`linear-gradient(135deg,${C.accent},#e09520)`,color:"#000",border:"none",borderRadius:14,padding:"16px",fontFamily:F,fontWeight:900,fontSize:22,letterSpacing:".04em",boxShadow:`0 4px 24px ${C.accent}44`,marginBottom:10,cursor:"pointer"}}>
+            🪣 LOG SCOOP<div style={{fontSize:12,fontWeight:600,marginTop:3,opacity:.8}}>#{myPoints.length+1} · {(bucketT*selSz.pct/100).toFixed(2)}t · {selSz.label}</div>
+          </button>
+        </>}
+
+        {/* VL-connected info card */}
+        {isOperator&&vlConnected&&<div style={{background:`${C.success}10`,border:`1px solid ${C.success}33`,borderRadius:11,padding:"12px 14px",marginTop:6,marginBottom:10}}>
+          <div style={{fontFamily:F,fontWeight:700,fontSize:11,color:C.success,letterSpacing:".06em",textTransform:"uppercase",marginBottom:4}}>● VisionLink connected</div>
+          <div style={{fontSize:12,color:C.textSub,lineHeight:1.5}}>Scoop and cycle data flow automatically from this machine's API. Manual entry is disabled.</div>
+        </div>}
+
+        {/* Idle simulation — operator only */}
+        {isOperator&&<div style={{marginTop:6,background:`${C.danger}08`,border:`1px solid ${C.danger}22`,borderRadius:10,padding:"12px 14px"}}>
+          <div style={{fontSize:10,color:C.danger,fontFamily:F,fontWeight:700,marginBottom:6}}>⚡ IDLE DETECTION · {OP.idleAlertMins}min · DEMO: 1 sec ≈ 1 min</div>
+          <button onClick={startIdle} disabled={simOn} style={{background:simOn?C.border:C.danger,color:simOn?C.muted:"#fff",border:"none",borderRadius:8,padding:"9px 16px",fontSize:13,fontFamily:F,fontWeight:700,cursor:simOn?"default":"pointer"}}>{simOn?`⏱ Running… ${idleMins}/${OP.idleAlertMins}min`:"Simulate Idle Alert"}</button>
+        </div>}
       </div>}
-      
-      {tab==="log"&&<div><div style={{fontFamily:F,fontWeight:700,fontSize:12,color:C.muted,letterSpacing:".06em",textTransform:"uppercase",marginBottom:10}}>Downtime Log</div>{events.length===0?<Card><div style={{fontSize:13,color:C.success,textAlign:"center",padding:16}}>✓ No downtime events this shift</div></Card>:events.map((e,i)=>{const dc=DT_CATS[e.cat];return <div key={i} style={{background:C.card,border:`1px solid ${e.flagged?C.amber:dc?.fault?C.danger:C.border}33`,borderLeft:`4px solid ${e.flagged?C.amber:dc?.fault?C.danger:C.muted}`,borderRadius:12,padding:"12px 14px",marginBottom:8}}><div style={{display:"flex",gap:10,alignItems:"flex-start"}}><span style={{fontSize:20,flexShrink:0}}>{dc?.icon}</span><div style={{flex:1}}><div style={{fontFamily:F,fontWeight:700,fontSize:14}}>{dc?.label}</div><div style={{fontSize:11,color:C.muted,marginTop:2}}>{e.time} · {(e.hrs*60).toFixed(0)}min{e.note?` · "${e.note}"`:""}</div></div>{(dc?.fault||e.flagged)&&<Pill label={e.flagged?"FLAGGED":"OP FAULT"} color={e.flagged?C.amber:C.danger}/>}</div></div>;})}
+
+      {tab==="log"&&isOperator&&<div>
+        <div style={{fontFamily:F,fontWeight:700,fontSize:12,color:C.muted,letterSpacing:".06em",textTransform:"uppercase",marginBottom:10}}>Downtime Log</div>
+        {events.length===0?<Card><div style={{fontSize:13,color:C.success,textAlign:"center",padding:16}}>✓ No downtime events this shift</div></Card>:events.map((e,i)=>{const dc=DT_CATS[e.cat];return<div key={i} style={{background:C.card,border:`1px solid ${e.flagged?C.amber:dc?.fault?C.danger:C.border}33`,borderLeft:`4px solid ${e.flagged?C.amber:dc?.fault?C.danger:C.muted}`,borderRadius:12,padding:"12px 14px",marginBottom:8}}><div style={{display:"flex",gap:10,alignItems:"flex-start"}}><span style={{fontSize:20,flexShrink:0}}>{dc?.icon}</span><div style={{flex:1}}><div style={{fontFamily:F,fontWeight:700,fontSize:14}}>{dc?.label}</div><div style={{fontSize:11,color:C.muted,marginTop:2}}>{e.time} · {(e.hrs*60).toFixed(0)}min{e.note?` · "${e.note}"`:""}</div></div>{(dc?.fault||e.flagged)&&<Pill label={e.flagged?"FLAGGED":"OP FAULT"} color={e.flagged?C.amber:C.danger}/>}</div></div>;})}
       </div>}
-      {tab==="blast"&&<div>{BLASTS.filter(b=>b.status==="upcoming").map(b=><div key={b.id} style={{background:`${C.amber}10`,border:`1px solid ${C.amber}44`,borderRadius:12,padding:"14px 15px",marginBottom:10}}><div style={{fontFamily:F,fontWeight:700,fontSize:11,color:C.amber,marginBottom:3}}>⚠ NEXT BLAST</div><div style={{fontFamily:F,fontWeight:900,fontSize:18,marginBottom:2}}>{b.label}</div><div style={{fontSize:12,color:C.muted}}>Today at {b.time} · {b.dur}min hold</div></div>)}{BLASTS.map(b=>{const sc={upcoming:C.amber,completed:C.muted,scheduled:C.info};return <Card key={b.id} style={{padding:"11px 13px"}}><div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}><div><div style={{fontFamily:F,fontWeight:700,fontSize:13}}>{b.label}</div><div style={{fontSize:11,color:C.muted}}>Today · {b.time} · {b.dur}min hold</div></div><Pill label={b.status.toUpperCase()} color={sc[b.status]}/></div></Card>;})}
+
+      {tab==="blast"&&<div>
+        {BLASTS.filter(b=>b.status==="upcoming").map(b=><div key={b.id} style={{background:`${C.amber}10`,border:`1px solid ${C.amber}44`,borderRadius:12,padding:"14px 15px",marginBottom:10}}><div style={{fontFamily:F,fontWeight:700,fontSize:11,color:C.amber,marginBottom:3}}>⚠ NEXT BLAST</div><div style={{fontFamily:F,fontWeight:900,fontSize:18,marginBottom:2}}>{b.label}</div><div style={{fontSize:12,color:C.muted}}>Today at {b.time} · {b.dur}min hold</div></div>)}
+        {BLASTS.map(b=>{const sc={upcoming:C.amber,completed:C.muted,scheduled:C.info};return<Card key={b.id} style={{padding:"11px 13px"}}><div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}><div><div style={{fontFamily:F,fontWeight:700,fontSize:13}}>{b.label}</div><div style={{fontSize:11,color:C.muted}}>Today · {b.time} · {b.dur}min hold</div></div><Pill label={b.status.toUpperCase()} color={sc[b.status]}/></div></Card>;})}
       </div>}
     </div>
   </div>;
@@ -2864,7 +3192,7 @@ function ComplianceHub(){
 
 function Nav({active,set,role}){
   const lv=ROLES[role]?.level||1;
-  const tabs=[{id:"board",icon:"📡",label:"Live"},{id:"ops",icon:"🪣",label:"My Ops",op:true},{id:"checks",icon:"✅",label:"Checks"},{id:"perf",icon:"👷",label:"Performance"},{id:"intel",icon:"🧠",label:"Intel"},{id:"comply",icon:"📋",label:"Comply",mgr:true},{id:"scoring",icon:"📊",label:"Rankings",mgr:true}].filter(t=>(!t.op||lv===1)&&(!t.mgr||lv>=2));
+  const tabs=[{id:"board",icon:"📡",label:"Live"},{id:"ops",icon:"📈",label:"Production"},{id:"checks",icon:"✅",label:"Checks"},{id:"perf",icon:"👷",label:"Performance"},{id:"intel",icon:"🧠",label:"Intel"},{id:"comply",icon:"📋",label:"Comply",mgr:true},{id:"scoring",icon:"📊",label:"Rankings",mgr:true}].filter(t=>(!t.op||lv===1)&&(!t.mgr||lv>=2));
   return <div style={{position:"fixed",bottom:0,left:"50%",transform:"translateX(-50%)",width:"100%",maxWidth:420,background:`${C.surface}f5`,backdropFilter:"blur(12px)",borderTop:`1px solid ${C.border}`,display:"flex",zIndex:100}}>
     {tabs.map(t=><button key={t.id} onClick={()=>set(t.id)} style={{flex:1,padding:"9px 0",background:"none",border:"none",color:active===t.id?C.accent:C.muted,display:"flex",flexDirection:"column",alignItems:"center",gap:2,fontSize:active===t.id?10:9,fontFamily:F,fontWeight:active===t.id?700:400,cursor:"pointer",borderTop:active===t.id?`2px solid ${C.accent}`:"2px solid transparent"}}>
       <span style={{fontSize:17}}>{t.icon}</span>{t.label}
@@ -3383,7 +3711,7 @@ function MineOpsApp() {
     if(flow==="tickets")return <HandoverTicketsScreen activeMine={activeMine} user={user} allMachines={allMachines} onCreate={()=>setFlow("reportIssue")} onSelect={t=>{window.__currentTicketId=t.id;setFlow("ticketDetail");}} onBack={()=>setFlow("app")}/>
     if(flow==="ticketDetail")return <TicketDetailScreen ticketId={window.__currentTicketId} activeMine={activeMine} user={user} allMachines={allMachines} onBack={()=>setFlow("tickets")}/>
     if(flow==="plants")return <PlantsAdminScreen activeMine={activeMine} onBack={()=>setFlow("settings")}/>
-    if(tab==="ops"&&lv===1)return <ScoopLoggerScreen user={user} activeMine={activeMine} activeShiftId={activeShiftId} machineId={user?.machine_id}/>
+    if(tab==="ops")return <ProductionScreen user={user} activeMine={activeMine} activeShiftId={activeShiftId} machineId={user?.machine} role={user?.role} allMachines={allMachines} remoteOperators={remoteOperators}/>
     if(tab==="checks")return <ChecksHub allMachines={allMachines} catDemo={catDemo} activeMine={activeMine} activeShiftId={activeShiftId} user={user}/>
     if(tab==="perf")return <MachinePerformanceScreen allMachines={allMachines} custPerfData={custPerfData}/>
     if(tab==="intel")return <IntelligenceHub/>
