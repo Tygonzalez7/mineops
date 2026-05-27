@@ -4716,270 +4716,236 @@ const DEMO_MINES=[
   {id:"mine_003",name:"Blue Hills Aggregates",code:"BLUE44", location:"New South Wales, AU",machines:5,operators:9, plan:"pro"},
 ];
 
-function OnboardingScreen({onEnterDemo,onJoinMine,onCreateMine,onSignIn}){
-  return <div style={{minHeight:"100vh",display:"flex",flexDirection:"column",justifyContent:"space-between",padding:"40px 22px 32px"}} className="up">
+// ── Onboarding (Welcome) ──────────────────────────────────────────────────
+// Shown after sign-up / sign-in when the user has no mine memberships yet.
+// Two big paths: create a new mine or join one via 6-char code.
+function OnboardingScreen({onCreateMine,onJoinMine,onSignOut}){
+  return<div style={{minHeight:"100vh",display:"flex",flexDirection:"column",justifyContent:"space-between",background:`radial-gradient(ellipse at top, ${C.accent}12, ${C.bg} 60%)`,padding:"44px 22px 28px"}}>
     <div style={{textAlign:"center"}}>
-      <div style={{fontFamily:F,fontWeight:900,fontSize:52,color:C.accent,letterSpacing:".06em",marginBottom:6}}>MINEOPS</div>
-      <div style={{fontSize:11,color:C.muted,letterSpacing:".18em",textTransform:"uppercase"}}>Production Intelligence Platform</div>
-      <div style={{display:"flex",justifyContent:"center",gap:10,flexWrap:"wrap",marginTop:16}}>
-        {["CAT VisionLink","Powerscreen Pulse","Weather API","Multi-site"].map(t=><div key={t} style={{background:`${C.accent}12`,border:`1px solid ${C.accent}22`,borderRadius:6,padding:"3px 10px",fontSize:10,color:C.accent,fontFamily:F,fontWeight:700}}>{t}</div>)}
-      </div>
+      <div style={{fontSize:60,marginBottom:14}}>⛏</div>
+      <div style={{fontFamily:F,fontWeight:900,fontSize:32,color:C.text,marginBottom:8,letterSpacing:".02em"}}>You're in</div>
+      <div style={{fontSize:14,color:C.muted,lineHeight:1.55,maxWidth:300,margin:"0 auto"}}>One last step — set up your crew. You can join more mines later.</div>
     </div>
+
     <div>
-      <button onClick={onCreateMine} style={{width:"100%",background:`linear-gradient(135deg,${C.accent},#d4881e)`,color:"#000",border:"none",borderRadius:14,padding:"18px",fontFamily:F,fontWeight:900,fontSize:20,cursor:"pointer",marginBottom:12}}>
-        ⛏ Create a Mine
-        <div style={{fontSize:12,fontWeight:600,marginTop:4,opacity:.75}}>Set up your operation · get your team code</div>
+      <button onClick={onCreateMine}
+        style={{width:"100%",background:`linear-gradient(135deg,${C.accent},#d4881e)`,color:"#000",border:"none",borderRadius:16,padding:"20px 22px",fontFamily:F,fontWeight:900,fontSize:18,cursor:"pointer",marginBottom:12,boxShadow:`0 6px 24px ${C.accent}33`,textAlign:"left",display:"flex",alignItems:"center",gap:16,letterSpacing:".02em"}}>
+        <span style={{fontSize:34,flexShrink:0}}>⛏</span>
+        <div style={{flex:1,minWidth:0}}>Create a new mine
+          <div style={{fontSize:11,fontWeight:600,marginTop:4,opacity:.78,letterSpacing:".02em"}}>You'll be admin · get a code to share with your crew</div>
+        </div>
+        <span style={{fontSize:22}}>→</span>
       </button>
-      <button onClick={onJoinMine} style={{width:"100%",background:C.card,border:`2px solid ${C.border}`,borderRadius:14,padding:"16px",fontFamily:F,fontWeight:900,fontSize:18,color:C.text,cursor:"pointer",marginBottom:12}}>
-        👷 Join a Mine
-        <div style={{fontSize:12,fontWeight:600,marginTop:3,color:C.muted}}>Have a mine code? Sign in to your operation</div>
+
+      <button onClick={onJoinMine}
+        style={{width:"100%",background:C.card,border:`2px solid ${C.border}`,color:C.text,borderRadius:16,padding:"20px 22px",fontFamily:F,fontWeight:900,fontSize:18,cursor:"pointer",marginBottom:18,textAlign:"left",display:"flex",alignItems:"center",gap:16,letterSpacing:".02em"}}>
+        <span style={{fontSize:34,flexShrink:0}}>👷</span>
+        <div style={{flex:1,minWidth:0}}>Join an existing mine
+          <div style={{fontSize:11,fontWeight:600,marginTop:4,color:C.muted,letterSpacing:".02em"}}>Got a 6-character code from your admin?</div>
+        </div>
+        <span style={{fontSize:22,color:C.muted}}>→</span>
       </button>
-      <button onClick={onEnterDemo} style={{width:"100%",background:"transparent",border:`1px solid ${C.border}`,borderRadius:12,padding:"12px",fontFamily:F,fontWeight:700,fontSize:14,color:C.muted,cursor:"pointer"}}>
-        Try Demo →
-      </button>
-      <div style={{textAlign:"center",marginTop:18,fontSize:13,color:C.muted}}>Already have an account? <span onClick={onSignIn} style={{color:C.accent,fontFamily:F,fontWeight:700,cursor:"pointer",textDecoration:"underline"}}>Sign in</span></div>
     </div>
-    <div style={{textAlign:"center",fontSize:10,color:C.muted,lineHeight:1.6}}>
-      MineOps · MQSHA 1999 / Reg 2017 · CAT VisionLink AEMP 2.0<br/>
-      Secure multi-tenant · Data never shared between mines
+
+    <div style={{textAlign:"center",fontSize:13,color:C.muted}}>
+      Wrong account?{" "}<button onClick={onSignOut} style={{background:"none",border:"none",color:C.accent,fontFamily:F,fontWeight:700,fontSize:13,cursor:"pointer",textDecoration:"underline",padding:0}}>Sign out</button>
     </div>
   </div>;
 }
 
+// ── Share Code Screen ─────────────────────────────────────────────────────
+// Big mono share code · tap-to-copy · native share sheet · instructions.
+function ShareCodeScreen({mine,onContinue,onBack,heroTitle="🎉",heroLine="Mine created"}){
+  const[copied,setCopied]=useState(false);
+  const[shared,setShared]=useState(false);
+  const shareUrl="https://mineops-ten.vercel.app";
+  const shareMessage=`Join my crew on MineOps. Code: ${mine.code}\n\nDownload: ${shareUrl}`;
+  const copy=async()=>{
+    try{await navigator.clipboard.writeText(mine.code);setCopied(true);setTimeout(()=>setCopied(false),1800);}
+    catch(e){console.error("clipboard:",e);}
+  };
+  const share=async()=>{
+    if(navigator.share){
+      try{await navigator.share({title:"Join my crew on MineOps",text:shareMessage});setShared(true);setTimeout(()=>setShared(false),1800);}
+      catch(e){/* user cancelled — ignore */}
+    }else{
+      try{await navigator.clipboard.writeText(shareMessage);setShared(true);setTimeout(()=>setShared(false),1800);}catch(e){}
+    }
+  };
+  return<div style={{minHeight:"100vh",display:"flex",flexDirection:"column",background:`radial-gradient(ellipse at top, ${C.success}10, ${C.bg} 60%)`,padding:"36px 22px 28px"}}>
+    {onBack&&<button onClick={onBack} style={{background:"none",border:"none",color:C.muted,fontSize:13,fontFamily:F,fontWeight:700,cursor:"pointer",textAlign:"left",marginBottom:8,padding:0,alignSelf:"flex-start"}}>← Back</button>}
+    <div style={{textAlign:"center",marginBottom:28}}>
+      <div style={{fontSize:56,marginBottom:14}}>{heroTitle}</div>
+      <div style={{fontFamily:F,fontWeight:900,fontSize:26,color:C.success}}>{mine.name}</div>
+      <div style={{fontSize:12,color:C.muted,marginTop:4}}>{[mine.location,heroLine].filter(Boolean).join(" · ")}</div>
+    </div>
+
+    <div style={{flex:1,display:"flex",flexDirection:"column",justifyContent:"center"}}>
+      <div style={{fontSize:11,color:C.muted,fontFamily:F,fontWeight:700,letterSpacing:".12em",textTransform:"uppercase",textAlign:"center",marginBottom:12}}>Mine share code</div>
+      <button onClick={copy}
+        style={{background:C.card,border:`2px solid ${C.accent}66`,borderRadius:20,padding:"28px 20px",cursor:"pointer",marginBottom:14,width:"100%"}}>
+        <div style={{fontFamily:'"SF Mono","Menlo",monospace',fontWeight:900,fontSize:46,color:C.accent,letterSpacing:".24em",textAlign:"center"}}>{mine.code}</div>
+        <div style={{fontSize:10,color:copied?C.success:C.muted,marginTop:12,fontFamily:F,fontWeight:700,letterSpacing:".1em",textTransform:"uppercase"}}>{copied?"✓ Copied":"Tap to copy"}</div>
+      </button>
+
+      <button onClick={share}
+        style={{width:"100%",background:`linear-gradient(135deg,${C.accent},#d4881e)`,color:"#000",border:"none",borderRadius:14,padding:"16px",fontFamily:F,fontWeight:900,fontSize:17,letterSpacing:".04em",cursor:"pointer",marginBottom:14,display:"flex",alignItems:"center",justifyContent:"center",gap:10}}>
+        <span style={{fontSize:20}}>↗</span> {shared?"Shared":"Share with crew"}
+      </button>
+
+      <div style={{background:`${C.info}10`,border:`1px solid ${C.info}33`,borderRadius:12,padding:"12px 14px",fontSize:12,color:C.textSub,lineHeight:1.55}}>
+        <div style={{fontFamily:F,fontWeight:700,color:C.info,fontSize:10,letterSpacing:".06em",textTransform:"uppercase",marginBottom:6}}>What's next</div>
+        Your crew downloads MineOps, signs up, then enters this code on the Welcome screen. They join as Operators — change roles anytime from Setup → People.
+      </div>
+    </div>
+
+    {onContinue&&<button onClick={onContinue}
+      style={{width:"100%",background:C.success,color:"#000",border:"none",borderRadius:14,padding:"17px",fontFamily:F,fontWeight:900,fontSize:18,letterSpacing:".04em",cursor:"pointer",marginTop:22}}>
+      Enter MineOps →
+    </button>}
+  </div>;
+}
+
+// ── Create Mine Flow ──────────────────────────────────────────────────────
+// Assumes session exists (onboarding is only reached post-signup).
 function CreateMineFlow({onComplete,onBack}){
   const{session}=useSupabase();
-  // If we already have an authenticated session (new clean flow), skip the
-  // legacy step-1 account form entirely — start at mine setup.
-  const[step,setStep]=useState(session?2:1); // 1=account 2=mine setup 3=crushers 4=code
-  const[email,setEmail]=useState(session?.user?.email||"");const[pass,setPass]=useState("");const[pass2,setPass2]=useState("");
-  const[mineName,setMineName]=useState("");const[location,setLocation]=useState("");
-  const[adminName,setAdminName]=useState(session?.user?.user_metadata?.name||"");
-  const[numCrushers,setNumCrushers]=useState(1);
-  const[code]=useState(()=>Math.random().toString(36).slice(2,8).toUpperCase());
+  const[mineName,setMineName]=useState("");
+  const[location,setLocation]=useState("");
   const[creating,setCreating]=useState(false);
-  const[createErr,setCreateErr]=useState("");
-  const passOk=pass.length>=8&&pass===pass2;
-  const emailOk=/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
-  const inp={background:C.surface,color:C.text,border:`1px solid ${C.border}`,borderRadius:9,padding:"12px 14px",fontSize:15,width:"100%",outline:"none",marginBottom:10};
-  const steps=["Account","Mine Setup","Done"];
-  const Progress=()=><div style={{display:"flex",gap:0,marginBottom:22}}>
-    {steps.map((s,i)=><div key={i} style={{flex:1,textAlign:"center"}}>
-      <div style={{height:3,background:i<step-1?C.success:i===step-1?C.accent:C.border,borderRadius:99,marginBottom:5,transition:"background .3s"}}/>
-      <div style={{fontSize:9,color:i<step?C.text:C.muted,fontFamily:F,fontWeight:700}}>{s}</div>
-    </div>)}
-  </div>;
-  if(step===1)return <div style={{minHeight:"100vh",display:"flex",flexDirection:"column",justifyContent:"center",padding:"28px 20px"}} className="up">
-    <button onClick={onBack} style={{background:"none",border:"none",color:C.muted,fontSize:12,fontFamily:F,fontWeight:700,cursor:"pointer",textAlign:"left",marginBottom:16}}>← Back</button>
-    <div style={{fontFamily:F,fontWeight:900,fontSize:26,color:C.accent,marginBottom:4}}>Create Account</div>
-    <div style={{fontSize:12,color:C.muted,marginBottom:20}}>This becomes your Mine Admin account</div>
-    <Progress/>
-    <div style={{fontSize:12,color:C.muted,marginBottom:5}}>Your name</div>
-    <input value={adminName} onChange={e=>setAdminName(e.target.value)} placeholder="e.g. Craig O'Brien" style={{...inp,border:`1px solid ${adminName.trim()?C.success:C.border}`}}/>
-    <div style={{fontSize:12,color:C.muted,marginBottom:5}}>Work email</div>
-    <input type="email" value={email} onChange={e=>setEmail(e.target.value)} placeholder="you@company.com.au" style={{...inp,border:`1px solid ${emailOk?C.success:C.border}`}}/>
-    <div style={{fontSize:12,color:C.muted,marginBottom:5}}>Password <span style={{color:C.muted,fontWeight:400}}>(min 8 characters)</span></div>
-    <input type="password" value={pass} onChange={e=>setPass(e.target.value)} placeholder="••••••••" style={{...inp,border:`1px solid ${pass.length>=8?C.success:C.border}`}}/>
-    <div style={{fontSize:12,color:C.muted,marginBottom:5}}>Confirm password</div>
-    <input type="password" value={pass2} onChange={e=>setPass2(e.target.value)} placeholder="••••••••" style={{...inp,border:`1px solid ${passOk&&pass?C.success:pass2&&!passOk?C.danger:C.border}`}}/>
-    {pass2&&!passOk&&pass2.length>0&&<div style={{fontSize:11,color:C.danger,marginBottom:8}}>Passwords don't match</div>}
-    <button onClick={()=>{if(emailOk&&passOk&&adminName.trim())setStep(2);}} style={{width:"100%",background:emailOk&&passOk&&adminName.trim()?C.success:C.border,color:emailOk&&passOk&&adminName.trim()?"#000":C.muted,border:"none",borderRadius:12,padding:"15px",fontFamily:F,fontWeight:900,fontSize:18,cursor:"pointer",transition:"background .2s",marginTop:4}}>
-      Continue →
-    </button>
-  </div>;
-  if(step===2)return <div style={{minHeight:"100vh",display:"flex",flexDirection:"column",justifyContent:"center",padding:"28px 20px"}} className="up">
-    <div style={{fontFamily:F,fontWeight:900,fontSize:26,color:C.accent,marginBottom:4}}>Mine Setup</div>
-    <div style={{fontSize:12,color:C.muted,marginBottom:20}}>Tell us about your operation</div>
-    <Progress/>
-    <div style={{fontSize:12,color:C.muted,marginBottom:5}}>Mine / quarry name</div>
-    <input value={mineName} onChange={e=>setMineName(e.target.value)} placeholder="e.g. Redrock Quarry" style={{...inp,border:`1px solid ${mineName.trim()?C.success:C.border}`}}/>
-    <div style={{fontSize:12,color:C.muted,marginBottom:5}}>Location</div>
-    <input value={location} onChange={e=>setLocation(e.target.value)} placeholder="e.g. Queensland, Australia" style={{...inp,border:`1px solid ${location.trim()?C.success:C.border}`}}/>
-    <div style={{fontSize:12,color:C.muted,marginBottom:8}}>How many crushers?</div>
-    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8,marginBottom:16}}>
-      {[1,2,3].map(n=><button key={n} onClick={()=>setNumCrushers(n)} style={{background:numCrushers===n?`${C.accent}22`:"transparent",border:`2px solid ${numCrushers===n?C.accent:C.border}`,borderRadius:10,padding:"14px 8px",color:numCrushers===n?C.accent:C.muted,fontFamily:F,fontWeight:900,fontSize:24,cursor:"pointer"}}>{n}</button>)}
+  const[err,setErr]=useState("");
+  const[created,setCreated]=useState(null);
+  const code=useMemo(()=>{
+    const chars="ABCDEFGHJKLMNPQRSTUVWXYZ23456789"; // skip 0/O/1/I/L
+    let out="";for(let i=0;i<6;i++)out+=chars[Math.floor(Math.random()*chars.length)];return out;
+  },[]);
+
+  const canCreate=!!(mineName.trim()&&session);
+  const submit=async()=>{
+    if(!canCreate||creating)return;
+    setCreating(true);setErr("");
+    try{
+      const{data:mine,error:mineErr}=await supabase.from("mines").insert({
+        name:mineName.trim(),
+        location:location.trim()||null,
+        code,
+        plan:"starter",
+        owner_id:session.user.id,
+      }).select().single();
+      if(mineErr)throw mineErr;
+      const adminName=session.user.user_metadata?.name||session.user.email?.split("@")[0]||"Admin";
+      const{error:opErr}=await supabase.from("operators").insert({
+        auth_id:session.user.id,mine_id:mine.id,name:adminName,
+        role:"admin",status:"active",
+      });
+      if(opErr)throw opErr;
+      try{localStorage.setItem("mineops:activeMineId",mine.id);}catch(e){}
+      setCreated(mine);
+    }catch(e){console.error("create mine:",e);setErr(friendlyAuthError(e));}
+    finally{setCreating(false);}
+  };
+
+  if(created)return<ShareCodeScreen mine={created} onContinue={()=>onComplete(created)}/>;
+
+  const inp={background:C.surface,color:C.text,border:`1px solid ${C.border}`,borderRadius:10,padding:"13px 14px",fontSize:15,width:"100%",outline:"none",boxSizing:"border-box",fontFamily:"inherit",marginBottom:14};
+
+  return<div style={{minHeight:"100vh",display:"flex",flexDirection:"column",padding:"28px 22px"}}>
+    <button onClick={onBack} style={{background:"none",border:"none",color:C.muted,fontSize:13,fontFamily:F,fontWeight:700,cursor:"pointer",textAlign:"left",marginBottom:18,padding:0,alignSelf:"flex-start"}}>← Back</button>
+    <div style={{marginBottom:22}}>
+      <div style={{fontFamily:F,fontWeight:900,fontSize:28,color:C.accent,letterSpacing:".02em"}}>Create your mine</div>
+      <div style={{fontSize:13,color:C.muted,marginTop:6}}>You'll get a share code once it's created.</div>
     </div>
-    <button onClick={()=>{if(mineName.trim()&&location.trim())setStep(3);}} style={{width:"100%",background:mineName.trim()&&location.trim()?C.success:C.border,color:mineName.trim()&&location.trim()?"#000":C.muted,border:"none",borderRadius:12,padding:"15px",fontFamily:F,fontWeight:900,fontSize:18,cursor:"pointer",transition:"background .2s"}}>
-      Create Mine →
-    </button>
-    <button onClick={()=>setStep(1)} style={{width:"100%",background:"none",border:"none",color:C.muted,padding:"12px",fontFamily:F,fontWeight:700,fontSize:13,cursor:"pointer",marginTop:4}}>← Back</button>
-  </div>;
-  // Step 3 — success + code
-  return <div style={{minHeight:"100vh",display:"flex",flexDirection:"column",justifyContent:"center",padding:"28px 20px",textAlign:"center"}} className="up">
-    <div style={{fontSize:56,marginBottom:12}}>⛏</div>
-    <div style={{fontFamily:F,fontWeight:900,fontSize:28,color:C.success,marginBottom:4}}>{mineName}</div>
-    <div style={{fontSize:13,color:C.muted,marginBottom:28}}>{location} · {numCrushers} crusher{numCrushers!==1?"s":""}</div>
-    <div style={{background:C.card,border:`2px solid ${C.accent}`,borderRadius:16,padding:"22px",marginBottom:20}}>
-      <div style={{fontFamily:F,fontWeight:700,fontSize:12,color:C.muted,letterSpacing:".12em",textTransform:"uppercase",marginBottom:10}}>Your mine code — share this with your team</div>
-      <div style={{fontFamily:F,fontWeight:900,fontSize:46,color:C.accent,letterSpacing:".15em"}}>{code}</div>
-      <div style={{fontSize:11,color:C.muted,marginTop:10}}>Staff enter this code when signing up · keep it safe</div>
-    </div>
-    <div style={{background:`${C.success}10`,border:`1px solid ${C.success}33`,borderRadius:12,padding:"12px 14px",marginBottom:20,textAlign:"left"}}>
-      <div style={{fontFamily:F,fontWeight:700,fontSize:13,color:C.success,marginBottom:6}}>What happens next</div>
-      {["Your team downloads MineOps and taps Join a Mine","They enter code "+code+" to find "+mineName,"They create their profile and select their role","You approve them as Admin — or set auto-approve on","Your machines and crushers are set up in Settings"].map((s,i)=><div key={i} style={{display:"flex",gap:10,marginBottom:5}}><span style={{color:C.success,flexShrink:0}}>✓</span><span style={{fontSize:12,color:C.muted}}>{s}</span></div>)}
-    </div>
-    {createErr&&<div style={{background:`${C.danger}15`,border:`1px solid ${C.danger}44`,borderRadius:10,padding:"10px 12px",marginBottom:12,fontSize:12,color:C.danger,textAlign:"left"}}>{createErr}</div>}
-    <button disabled={creating} onClick={async()=>{
-      setCreating(true); setCreateErr("");
-      try {
-        let authUserId=session?.user?.id||null;
-        if(!authUserId){
-          const { data: auth, error: authErr } = await supabase.auth.signUp({
-            email, password: pass,
-            options: { data: { name: adminName }, emailRedirectTo: window.location.origin },
-          });
-          if (authErr) throw authErr;
-          if (!auth?.user) throw new Error("Sign-up returned no user");
-          // Force a session so auth.uid() is set for the inserts below.
-          const { error: siErr } = await supabase.auth.signInWithPassword({ email, password: pass });
-          if (siErr) throw siErr;
-          authUserId=auth.user.id;
-        }
-        const { data: mine, error: mineErr } = await supabase.from("mines").insert({
-          name: mineName, location, code, plan: "starter", owner_id: authUserId,
-        }).select().single();
-        if (mineErr) throw mineErr;
-        const { error: opErr } = await supabase.from("operators").insert({
-          auth_id: authUserId, mine_id: mine.id, name: adminName,
-          role: "admin", status: "active",
-        });
-        if (opErr) throw opErr;
-        try{localStorage.setItem("mineops:activeMineId",mine.id);}catch(e){}
-        onComplete({ ...mine, mineName: mine.name, adminName, email: email||session?.user?.email });
-      } catch (err) {
-        console.error("Create mine failed:", err);
-        setCreateErr(friendlyAuthError(err));
-        setCreating(false);
-      }
-    }} style={{width:"100%",background:creating?C.border:`linear-gradient(135deg,${C.accent},#d4881e)`,color:creating?C.muted:"#000",border:"none",borderRadius:14,padding:"17px",fontFamily:F,fontWeight:900,fontSize:20,cursor:creating?"default":"pointer"}}>
-      {creating ? "Creating mine…" : "Enter MineOps →"}
-    </button>
+    <form onSubmit={e=>{e.preventDefault();submit();}} style={{flex:1,display:"flex",flexDirection:"column"}}>
+      <div style={{fontSize:11,color:C.muted,marginBottom:5,fontFamily:F,fontWeight:700,letterSpacing:".06em",textTransform:"uppercase"}}>Mine name <span style={{color:C.danger}}>*</span></div>
+      <input autoFocus value={mineName} onChange={e=>setMineName(e.target.value)} placeholder="Redrock Quarry"
+        style={{...inp,border:`1px solid ${mineName.trim()?C.success:C.border}`}}/>
+      <div style={{fontSize:11,color:C.muted,marginBottom:5,fontFamily:F,fontWeight:700,letterSpacing:".06em",textTransform:"uppercase"}}>Location <span style={{color:C.muted,fontWeight:400}}>· optional</span></div>
+      <input value={location} onChange={e=>setLocation(e.target.value)} placeholder="Queensland, AU" style={inp}/>
+      {err&&<div style={{background:`${C.danger}15`,border:`1px solid ${C.danger}44`,borderRadius:10,padding:"10px 12px",marginBottom:12,fontSize:12,color:C.danger,lineHeight:1.5}}>{err}</div>}
+      <button type="submit" disabled={!canCreate||creating}
+        style={{width:"100%",background:!canCreate||creating?C.border:`linear-gradient(135deg,${C.accent},#d4881e)`,color:!canCreate||creating?C.muted:"#000",border:"none",borderRadius:14,padding:"17px",fontFamily:F,fontWeight:900,fontSize:18,letterSpacing:".04em",cursor:canCreate&&!creating?"pointer":"default",transition:"all .15s",marginTop:"auto"}}>
+        {creating?"Creating mine…":"Create Mine →"}
+      </button>
+    </form>
   </div>;
 }
 
+// ── Join Mine Flow ────────────────────────────────────────────────────────
+// Single-screen 6-char code entry, auto-uppercase, auto-lookup, single tap join.
 function JoinMineFlow({onComplete,onBack}){
   const{session}=useSupabase();
-  const[step,setStep]=useState(1); // 1=find mine 2=account 3=role 4=pending
-  const[search,setSearch]=useState("");const[code,setCode]=useState("");
-  const[foundMine,setFoundMine]=useState(null);const[searchErr,setSearchErr]=useState("");
-  const[name,setName]=useState(session?.user?.user_metadata?.name||"");const[email,setEmail]=useState(session?.user?.email||"");const[pass,setPass]=useState("");
-  const[role,setRole]=useState(null);const[machine,setMachine]=useState(null);
-  const[searchLoading,setSearchLoading]=useState(false);
+  const[code,setCode]=useState("");
+  const[foundMine,setFoundMine]=useState(null);
+  const[lookup,setLookup]=useState(false);
+  const[err,setErr]=useState("");
   const[joining,setJoining]=useState(false);
-  const[joinErr,setJoinErr]=useState("");
-  const emailOk=/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
-  const passOk=pass.length>=8;
-  const inp={background:C.surface,color:C.text,border:`1px solid ${C.border}`,borderRadius:9,padding:"12px 14px",fontSize:15,width:"100%",outline:"none",marginBottom:10};
-  const searchMine=async()=>{
-    const q=(search||code).toUpperCase().trim();
-    if(!q){setSearchErr("Enter a mine code first.");return;}
-    setSearchLoading(true);setSearchErr("");setFoundMine(null);
-    try{
-      const {data,error}=await supabase.from("mines").select("id,name,location,code,plan").eq("code",q).maybeSingle();
-      if(error)throw error;
-      if(!data){setSearchErr("No mine found. Check the code and try again.");return;}
-      setFoundMine({...data,operators:0,machines:0});
-    }catch(err){
-      console.error("searchMine failed:",err);
-      setSearchErr(err.message||"Lookup failed. Try again.");
-    }finally{setSearchLoading(false);}
-  };
-  const ROLE_OPTS=[{id:"operator",label:"Operator",icon:"👷",color:"#4fa3e0",desc:"I operate mobile plant"},{id:"supervisor",label:"Supervisor",icon:"🔶",color:"#f5a623",desc:"I supervise the shift"},{id:"minemanager",label:"Mine Manager",icon:"⛏",color:"#a78bfa",desc:"I manage the operation"}];
-  if(step===1)return <div style={{minHeight:"100vh",display:"flex",flexDirection:"column",justifyContent:"center",padding:"28px 20px"}} className="up">
-    <button onClick={onBack} style={{background:"none",border:"none",color:C.muted,fontSize:12,fontFamily:F,fontWeight:700,cursor:"pointer",textAlign:"left",marginBottom:16}}>← Back</button>
-    <div style={{fontFamily:F,fontWeight:900,fontSize:26,color:C.accent,marginBottom:4}}>Find Your Mine</div>
-    <div style={{fontSize:12,color:C.muted,marginBottom:20}}>Enter the mine code your admin gave you, or search by name</div>
-    <div style={{fontSize:12,color:C.muted,marginBottom:5}}>Mine code or name</div>
-    <input value={search} onChange={e=>{setSearch(e.target.value);setSearchErr("");setFoundMine(null);}} onKeyDown={e=>e.key==="Enter"&&searchMine()} placeholder="e.g. REDROCK or Redrock Quarry" style={{...inp,border:`1px solid ${foundMine?C.success:searchErr?C.danger:C.border}`,textTransform:"uppercase"}}/>
-    {searchErr&&<div style={{fontSize:11,color:C.danger,marginBottom:10}}>{searchErr}</div>}
-    {foundMine&&<div style={{background:`${C.success}10`,border:`1.5px solid ${C.success}44`,borderRadius:12,padding:"14px",marginBottom:14}}>
-      <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:6}}>
-        <div><div style={{fontFamily:F,fontWeight:900,fontSize:18,color:C.success}}>{foundMine.name}</div><div style={{fontSize:11,color:C.muted}}>{foundMine.location}</div></div>
-        <span style={{background:`${C.success}20`,color:C.success,border:`1px solid ${C.success}44`,borderRadius:6,padding:"2px 8px",fontSize:10,fontFamily:F,fontWeight:700}}>FOUND</span>
-      </div>
-      <div style={{display:"flex",gap:8,fontSize:11,color:C.muted}}><span>👷 {foundMine.operators} operators</span><span>🚛 {foundMine.machines} machines</span></div>
-    </div>}
-    <button onClick={()=>foundMine?setStep(session?3:2):searchMine()} style={{width:"100%",background:foundMine?C.success:C.accent,color:"#000",border:"none",borderRadius:12,padding:"15px",fontFamily:F,fontWeight:900,fontSize:18,cursor:"pointer",transition:"background .2s"}}>
-      {foundMine?"Join "+foundMine.name+" →":"Search →"}
-    </button>
-  </div>;
-  if(step===2)return <div style={{minHeight:"100vh",display:"flex",flexDirection:"column",justifyContent:"center",padding:"28px 20px"}} className="up">
-    <div style={{fontFamily:F,fontWeight:900,fontSize:26,color:C.accent,marginBottom:2}}>Create Account</div>
-    <div style={{fontSize:12,color:C.muted,marginBottom:20}}>{foundMine?.name}</div>
-    <div style={{fontSize:12,color:C.muted,marginBottom:5}}>Your full name</div>
-    <input value={name} onChange={e=>setName(e.target.value)} placeholder="e.g. James Smith" style={{...inp,border:`1px solid ${name.trim()?C.success:C.border}`}}/>
-    <div style={{fontSize:12,color:C.muted,marginBottom:5}}>Work email</div>
-    <input type="email" value={email} onChange={e=>setEmail(e.target.value)} placeholder="you@company.com.au" style={{...inp,border:`1px solid ${emailOk?C.success:C.border}`}}/>
-    <div style={{fontSize:12,color:C.muted,marginBottom:5}}>Password <span style={{color:C.muted,fontWeight:400}}>(min 8 characters)</span></div>
-    <input type="password" value={pass} onChange={e=>setPass(e.target.value)} placeholder="••••••••" style={{...inp,border:`1px solid ${passOk?C.success:C.border}`}}/>
-    <button onClick={()=>{if(name.trim()&&emailOk&&passOk)setStep(3);}} style={{width:"100%",background:name.trim()&&emailOk&&passOk?C.success:C.border,color:name.trim()&&emailOk&&passOk?"#000":C.muted,border:"none",borderRadius:12,padding:"15px",fontFamily:F,fontWeight:900,fontSize:18,cursor:"pointer",transition:"background .2s",marginTop:4}}>
-      Continue →
-    </button>
-    <button onClick={()=>setStep(1)} style={{width:"100%",background:"none",border:"none",color:C.muted,padding:"10px",fontFamily:F,fontWeight:700,fontSize:13,cursor:"pointer"}}>← Back</button>
-  </div>;
-  if(step===3)return <div style={{minHeight:"100vh",display:"flex",flexDirection:"column",justifyContent:"center",padding:"28px 20px"}} className="up">
-    <div style={{fontFamily:F,fontWeight:900,fontSize:26,color:C.accent,marginBottom:4}}>Your Role</div>
-    <div style={{fontSize:12,color:C.muted,marginBottom:20}}>What do you do at {foundMine?.name}?</div>
-    <div style={{display:"flex",flexDirection:"column",gap:10,marginBottom:20}}>
-      {ROLE_OPTS.map(r=><button key={r.id} onClick={()=>setRole(r.id)} style={{background:role===r.id?`${r.color}15`:C.card,border:`2px solid ${role===r.id?r.color:C.border}`,borderRadius:14,padding:"16px 15px",display:"flex",alignItems:"center",gap:13,cursor:"pointer",textAlign:"left",transition:"all .15s"}}>
-        <div style={{width:44,height:44,borderRadius:12,background:`${r.color}20`,border:`2px solid ${r.color}44`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:22,flexShrink:0}}>{r.icon}</div>
-        <div><div style={{fontFamily:F,fontWeight:900,fontSize:17,color:role===r.id?r.color:C.text}}>{r.label}</div><div style={{fontSize:11,color:C.muted}}>{r.desc}</div></div>
-        {role===r.id&&<div style={{marginLeft:"auto",color:r.color,fontSize:20}}>✓</div>}
-      </button>)}
-    </div>
-    {role==="operator"&&<div style={{marginBottom:16}}>
-      <div style={{fontSize:12,color:C.muted,marginBottom:8}}>Primary machine (your admin can update this)</div>
-      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:6}}>
-        {BASE_MACHINES.filter(m=>m.type!=="Dozer").map(m=><button key={m.id} onClick={()=>setMachine(m.id)} style={{background:machine===m.id?`${C.accent}15`:C.card,border:`1.5px solid ${machine===m.id?C.accent:C.border}`,borderRadius:10,padding:"10px 11px",cursor:"pointer",textAlign:"left",transition:"all .15s"}}>
-          <div style={{fontFamily:F,fontWeight:700,fontSize:13,color:machine===m.id?C.accent:C.text}}>{m.model}</div>
-          <div style={{fontSize:10,color:C.muted}}>{m.type}</div>
-        </button>)}
-      </div>
-    </div>}
-    {joinErr&&<div style={{background:`${C.danger}15`,border:`1px solid ${C.danger}44`,borderRadius:10,padding:"10px 12px",marginBottom:10,fontSize:12,color:C.danger,textAlign:"left"}}>{joinErr}</div>}
-    <button disabled={joining||!role||(role==="operator"&&!machine)} onClick={async()=>{
-      if(!role||(role==="operator"&&!machine))return;
-      setJoining(true);setJoinErr("");
+
+  const cleanCode=code.toUpperCase().replace(/[^A-Z0-9]/g,"").slice(0,6);
+
+  useEffect(()=>{
+    if(cleanCode.length!==6){setFoundMine(null);return;}
+    if(foundMine?.code===cleanCode)return;
+    let cancelled=false;
+    setLookup(true);setErr("");
+    (async()=>{
       try{
-        let authUserId=session?.user?.id||null;
-        if(!authUserId){
-          const {data:auth,error:authErr}=await supabase.auth.signUp({email,password:pass,options:{data:{name},emailRedirectTo:window.location.origin}});
-          if(authErr)throw authErr;
-          if(!auth?.user)throw new Error("Sign-up returned no user");
-          const {error:siErr}=await supabase.auth.signInWithPassword({email,password:pass});
-          if(siErr)throw siErr;
-          authUserId=auth.user.id;
-        }
-        const {error:opErr}=await supabase.from("operators").insert({
-          auth_id:authUserId,mine_id:foundMine.id,name,role,
-          machine_id:role==="operator"?machine:null,status:"active",
+        const{data,error}=await supabase.from("mines").select("id,name,location,code,plan").eq("code",cleanCode).maybeSingle();
+        if(cancelled)return;
+        if(error)throw error;
+        if(!data){setErr("No mine found with that code. Check with your admin.");setFoundMine(null);}
+        else{setFoundMine(data);}
+      }catch(e){if(!cancelled){setErr(friendlyAuthError(e));}}
+      finally{if(!cancelled)setLookup(false);}
+    })();
+    return()=>{cancelled=true;};
+  },[cleanCode]);
+
+  const join=async()=>{
+    if(!foundMine||!session||joining)return;
+    setJoining(true);setErr("");
+    try{
+      const operatorName=session.user.user_metadata?.name||session.user.email?.split("@")[0]||"Operator";
+      const{data:existing}=await supabase.from("operators")
+        .select("id").eq("auth_id",session.user.id).eq("mine_id",foundMine.id).maybeSingle();
+      if(!existing){
+        const{error:opErr}=await supabase.from("operators").insert({
+          auth_id:session.user.id,mine_id:foundMine.id,
+          name:operatorName,role:"operator",status:"active",
         });
         if(opErr)throw opErr;
-        try{localStorage.setItem("mineops:activeMineId",foundMine.id);}catch(e){}
-        setStep(4);
-      }catch(err){
-        console.error("Join mine failed:",err);
-        setJoinErr(friendlyAuthError(err));
-      }finally{setJoining(false);}
-    }} style={{width:"100%",background:joining?C.border:(role&&(role!=="operator"||machine)?C.success:C.border),color:joining?C.muted:(role&&(role!=="operator"||machine)?"#000":C.muted),border:"none",borderRadius:12,padding:"15px",fontFamily:F,fontWeight:900,fontSize:18,cursor:joining?"default":"pointer",transition:"background .2s"}}>
-      {joining?"Joining…":session?"Join Mine →":"Request Access →"}
-    </button>
-    <button onClick={()=>setStep(2)} style={{width:"100%",background:"none",border:"none",color:C.muted,padding:"10px",fontFamily:F,fontWeight:700,fontSize:13,cursor:"pointer"}}>← Back</button>
-  </div>;
-  // Step 4 — pending or approved
-  return <div style={{minHeight:"100vh",display:"flex",flexDirection:"column",justifyContent:"center",padding:"28px 20px",textAlign:"center"}} className="up">
-    <div style={{fontSize:56,marginBottom:12}}>🎉</div>
-    <div style={{fontFamily:F,fontWeight:900,fontSize:26,color:C.success,marginBottom:6}}>Welcome, {name.split(" ")[0]}!</div>
-    <div style={{fontSize:13,color:C.muted,marginBottom:24}}>{foundMine?.name} · {ROLES[role]?.label}</div>
-    <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:14,padding:"16px",marginBottom:20,textAlign:"left"}}>
-      <div style={{fontFamily:F,fontWeight:700,fontSize:13,color:C.success,marginBottom:10}}>Account created ✓</div>
-      {[`Name: ${name}`,`Mine: ${foundMine?.name}`,`Role: ${ROLES[role]?.label}`,role==="operator"?`Machine: ${BASE_MACHINES.find(m=>m.id===machine)?.model||"—"}`:"Access: All shift data"].map((s,i)=><div key={i} style={{fontSize:12,color:C.muted,marginBottom:4}}>· {s}</div>)}
+      }
+      try{localStorage.setItem("mineops:activeMineId",foundMine.id);}catch(e){}
+      onComplete({mine:foundMine});
+    }catch(e){console.error("join mine:",e);setErr(friendlyAuthError(e));}
+    finally{setJoining(false);}
+  };
+
+  return<div style={{minHeight:"100vh",display:"flex",flexDirection:"column",padding:"28px 22px"}}>
+    <button onClick={onBack} style={{background:"none",border:"none",color:C.muted,fontSize:13,fontFamily:F,fontWeight:700,cursor:"pointer",textAlign:"left",marginBottom:18,padding:0,alignSelf:"flex-start"}}>← Back</button>
+    <div style={{marginBottom:24}}>
+      <div style={{fontFamily:F,fontWeight:900,fontSize:28,color:C.accent,letterSpacing:".02em"}}>Join a mine</div>
+      <div style={{fontSize:13,color:C.muted,marginTop:6}}>Enter the 6-character code your admin shared.</div>
     </div>
-    <div style={{background:`${C.success}10`,border:`1px solid ${C.success}33`,borderRadius:12,padding:"12px 14px",marginBottom:20}}>
-      <div style={{fontFamily:F,fontWeight:700,fontSize:13,color:C.success,marginBottom:4}}>✓ You're in</div>
-      <div style={{fontSize:11,color:C.muted,lineHeight:1.5}}>You now have access to {foundMine?.name}. Tap below to get started.</div>
-    </div>
-    <button onClick={()=>onComplete({name,email,role,machine,mine:foundMine})} style={{width:"100%",background:C.accent,color:"#000",border:"none",borderRadius:14,padding:"15px",fontFamily:F,fontWeight:900,fontSize:18,cursor:"pointer"}}>
-      Enter MineOps →
+
+    <div style={{fontSize:11,color:C.muted,marginBottom:10,fontFamily:F,fontWeight:700,letterSpacing:".1em",textTransform:"uppercase",textAlign:"center"}}>Mine code</div>
+    <input autoFocus value={cleanCode} onChange={e=>setCode(e.target.value)}
+      onKeyDown={e=>e.key==="Enter"&&foundMine&&join()}
+      placeholder="• • • • • •" autoCapitalize="characters" inputMode="text" autoComplete="one-time-code" maxLength={6}
+      style={{background:C.surface,color:C.text,border:`2px solid ${foundMine?C.success:err?C.danger:C.border}`,borderRadius:16,padding:"24px 18px",fontSize:36,width:"100%",outline:"none",boxSizing:"border-box",textAlign:"center",letterSpacing:".4em",fontFamily:'"SF Mono","Menlo",monospace',fontWeight:900,textTransform:"uppercase",marginBottom:16,transition:"border-color .15s"}}/>
+
+    {lookup&&<div style={{textAlign:"center",fontSize:12,color:C.muted,marginBottom:14}}>Looking up code…</div>}
+
+    {foundMine&&!lookup&&<div style={{background:`${C.success}10`,border:`1.5px solid ${C.success}44`,borderRadius:14,padding:"16px 18px",marginBottom:16}}>
+      <div style={{fontFamily:F,fontWeight:900,fontSize:20,color:C.success}}>{foundMine.name}</div>
+      {foundMine.location&&<div style={{fontSize:12,color:C.muted,marginTop:3}}>{foundMine.location}</div>}
+      <div style={{fontSize:11,color:C.textSub,marginTop:10,lineHeight:1.5}}>You'll join as an <b style={{color:C.text}}>Operator</b>. Your admin can change your role from Setup → People.</div>
+    </div>}
+
+    {err&&!lookup&&<div style={{background:`${C.danger}15`,border:`1px solid ${C.danger}44`,borderRadius:10,padding:"10px 12px",marginBottom:12,fontSize:12,color:C.danger,lineHeight:1.5}}>{err}</div>}
+
+    <button onClick={join} disabled={!foundMine||joining||!session}
+      style={{width:"100%",background:foundMine&&!joining?C.success:C.border,color:foundMine&&!joining?"#000":C.muted,border:"none",borderRadius:14,padding:"17px",fontFamily:F,fontWeight:900,fontSize:18,letterSpacing:".04em",cursor:foundMine&&!joining?"pointer":"default",transition:"all .15s",marginTop:"auto"}}>
+      {joining?"Joining…":foundMine?`Join ${foundMine.name} →`:"Enter a 6-character code"}
     </button>
   </div>;
 }
@@ -5321,6 +5287,7 @@ function MineOpsApp() {
   const [activeShiftId,setActiveShiftId]=useState(null)
   const [customCatData,setCustomCatData]=useState([])
   const [custPerfData,setCustPerfData]=useState({})
+  const [profileBump,setProfileBump]=useState(0) // re-runs loadProfile after Create/Join
   // Load the user's operator profile + mine whenever session changes.
   // A single auth.uid() can belong to multiple mines (contractor, multi-site).
   // We load all rows, then pick the active mine from localStorage > first.
@@ -5377,7 +5344,7 @@ function MineOpsApp() {
     }
     loadProfile();
     return()=>{cancelled=true;};
-  },[session,authEvent])
+  },[session,authEvent,profileBump])
   // When we have a real mine, load its machines + operators from Supabase.
   // Otherwise (demo mode) fall back to BASE_MACHINES + hardcoded USERS.
   const[remoteMachines,setRemoteMachines]=useState(null)
@@ -5476,11 +5443,9 @@ function MineOpsApp() {
         <button onClick={()=>setShowSignOut(true)} style={{background:"none",border:"none",color:C.muted,fontSize:12,fontFamily:F,fontWeight:700,cursor:"pointer"}}>Sign out</button>
       </div>}
     {(flow==="auth"||authEvent==="PASSWORD_RECOVERY")&&<div style={{flex:1,overflowY:"auto"}}><AuthScreen forceMode={authEvent==="PASSWORD_RECOVERY"?"reset":undefined} onResetComplete={()=>{clearAuthEvent&&clearAuthEvent();setFlow("auth");}}/></div>}
-    {flow==="onboarding"&&authEvent!=="PASSWORD_RECOVERY"&&<div style={{flex:1,overflowY:"auto"}}><OnboardingScreen onEnterDemo={()=>setFlow("auth")} onCreateMine={()=>setFlow("createMine")} onJoinMine={()=>setFlow("joinMine")} onSignIn={()=>setFlow("auth")}/></div>}
-    {flow==="createMine"&&<div style={{flex:1,overflowY:"auto"}}><CreateMineFlow onComplete={m=>{setActiveMine(m);setPendingMine(m);setFlow("subscription")}} onBack={()=>setFlow("onboarding")}/></div>}
-    {flow==="joinMine"&&<div style={{flex:1,overflowY:"auto"}}><JoinMineFlow onComplete={m=>{setActiveMine(m.mine);setFlow("login")}} onBack={()=>setFlow("onboarding")}/></div>}
-    {flow==="subscription"&&<div style={{flex:1,overflowY:"auto"}}><SubscriptionScreen mineName={pendingMine?.mineName||"Your Mine"} onSelect={()=>setFlow("vlSetup")}/></div>}
-    {flow==="vlSetup"&&<div style={{flex:1,overflowY:"auto"}}><VisionLinkSetup activeMine={activeMine} onComplete={()=>setFlow("login")} onSkip={()=>setFlow("login")}/></div>}
+    {flow==="onboarding"&&authEvent!=="PASSWORD_RECOVERY"&&<div style={{flex:1,overflowY:"auto"}}><OnboardingScreen onCreateMine={()=>setFlow("createMine")} onJoinMine={()=>setFlow("joinMine")} onSignOut={handleSignOut}/></div>}
+    {flow==="createMine"&&<div style={{flex:1,overflowY:"auto"}}><CreateMineFlow onComplete={()=>{setProfileBump(n=>n+1);setFlow("truckQ");}} onBack={()=>setFlow("onboarding")}/></div>}
+    {flow==="joinMine"&&<div style={{flex:1,overflowY:"auto"}}><JoinMineFlow onComplete={()=>{setProfileBump(n=>n+1);setFlow("truckQ");}} onBack={()=>setFlow("onboarding")}/></div>}
     {flow==="truckQ"&&<div style={{flex:1,overflowY:"auto"}}><TruckQuestion user={user} onAnswer={handleTruck}/></div>}
     {flow==="truckCheck"&&<div style={{flex:1,overflowY:"auto"}}><TruckCheckScreen onComplete={()=>setFlow(lv===1?"machines":"app")}/></div>}
     {flow==="machines"&&<div style={{flex:1,overflowY:"auto"}}><MachineSelectScreen allMachines={allMachines} catDemo={catDemo} isAdmin={user?.role==="admin"} activeMine={activeMine} activeShiftId={activeShiftId} user={user} onAddMachine={()=>setFlow("addMachine")} onComplete={()=>setFlow("app")}/></div>}
