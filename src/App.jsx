@@ -2245,6 +2245,7 @@ function MenuOverlay({user,onNav,onVehicleCheck,onClose,allMachines}){
 
         <Section title="Mine">
           <Item icon="🔀" label="Switch Mine" sub={activeMine?.name?`Currently: ${activeMine.name}`:"Pick a different mine or add a new one"} color={C.info} onClick={()=>{onNav("minePicker");onClose();}}/>
+          <Item icon="👤" label="Account" sub="Profile · password · memberships · delete" onClick={()=>{onNav("account");onClose();}}/>
         </Section>
 
         {isAdmin&&<Section title="Admin">
@@ -3305,42 +3306,6 @@ function IntelligenceHub(){
 }
 
 // ── Subscription Screen ────────────────────────────────────────────────────
-function SubscriptionScreen({mineName,onSelect}){
-  const[selected,setSelected]=useState("pro");
-  const PLANS=[
-    {id:"starter",label:"Starter",price:"$149",period:"/month",color:C.muted,
-     features:["Up to 5 machines","Up to 10 operators","CAT VisionLink integration","Daily production reports","Email support"],
-     limits:["No Powerscreen Pulse","No predictive maintenance","No multi-site"]},
-    {id:"pro",label:"Pro",price:"$299",period:"/month",color:C.accent,tag:"Most Popular",
-     features:["Up to 15 machines","Unlimited operators","CAT VisionLink + Powerscreen Pulse","All Intelligence features","Weather integration","Predictive maintenance","Photo guides","Priority support"],
-     limits:["Single site only"]},
-    {id:"enterprise",label:"Enterprise",price:"Custom",period:"",color:C.purple,
-     features:["Unlimited machines","Unlimited operators","Multiple mine sites","Custom API integrations","Dedicated account manager","On-site training","SLA guarantee"],
-     limits:[]},
-  ];
-  return <div style={{paddingBottom:30}} className="up">
-    <div style={{textAlign:"center",padding:"28px 20px 20px"}}>
-      <div style={{fontFamily:F,fontWeight:900,fontSize:26,color:C.accent}}>Choose Your Plan</div>
-      <div style={{fontSize:12,color:C.muted,marginTop:4}}>{mineName} · Cancel anytime · 14-day free trial</div>
-    </div>
-    <div style={{padding:"0 16px"}}>
-      {PLANS.map(p=><div key={p.id} onClick={()=>setSelected(p.id)} style={{background:selected===p.id?`${p.color}10`:C.card,border:`2px solid ${selected===p.id?p.color:C.border}`,borderRadius:16,padding:"18px 16px",marginBottom:12,cursor:"pointer",transition:"all .15s",position:"relative"}}>
-        {p.tag&&<div style={{position:"absolute",top:-1,right:16,background:p.color,color:"#000",borderRadius:"0 0 8px 8px",padding:"3px 10px",fontSize:10,fontFamily:F,fontWeight:900}}>{p.tag}</div>}
-        <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:12}}>
-          <div><div style={{fontFamily:F,fontWeight:900,fontSize:20,color:selected===p.id?p.color:C.text}}>{p.label}</div></div>
-          <div style={{textAlign:"right"}}><div style={{fontFamily:F,fontWeight:900,fontSize:26,color:selected===p.id?p.color:C.muted,lineHeight:1}}>{p.price}</div><div style={{fontSize:10,color:C.muted}}>{p.period}</div></div>
-        </div>
-        {p.features.map((f,i)=><div key={i} style={{display:"flex",gap:8,marginBottom:4,alignItems:"flex-start"}}><span style={{color:p.color,flexShrink:0,marginTop:1}}>✓</span><span style={{fontSize:12,color:selected===p.id?C.text:C.textSub}}>{f}</span></div>)}
-        {p.limits.map((f,i)=><div key={i} style={{display:"flex",gap:8,marginBottom:4,alignItems:"flex-start"}}><span style={{color:C.muted,flexShrink:0}}>·</span><span style={{fontSize:11,color:C.muted}}>{f}</span></div>)}
-      </div>)}
-      <button onClick={()=>onSelect(selected)} style={{width:"100%",background:`linear-gradient(135deg,${C.accent},#d4881e)`,color:"#000",border:"none",borderRadius:14,padding:"17px",fontFamily:F,fontWeight:900,fontSize:20,cursor:"pointer",marginBottom:10}}>
-        Start 14-Day Free Trial →
-      </button>
-      <div style={{textAlign:"center",fontSize:11,color:C.muted,lineHeight:1.6}}>No credit card required for trial<br/>Billing starts after 14 days · Cancel anytime</div>
-    </div>
-  </div>;
-}
-
 // ─── VisionLink Sync Button (manual re-sync) ─────────────────────
 function VisionLinkSyncButton({activeMine}){
   const[syncing,setSyncing]=useState(false);const[msg,setMsg]=useState("");const[err,setErr]=useState("");
@@ -3355,60 +3320,6 @@ function VisionLinkSyncButton({activeMine}){
 }
 
 // ── VisionLink Setup Wizard ────────────────────────────────────────────────
-function VisionLinkSetup({onComplete,onSkip,activeMine}){
-  const[step,setStep]=useState(1);
-  const[clientId,setClientId]=useState("");const[secret,setSecret]=useState("");const[appKey,setAppKey]=useState("");
-  const[importing,setImporting]=useState(false);const[imported,setImported]=useState(false);const[err,setErr]=useState("");
-  const inp={background:C.surface,color:C.text,border:`1px solid ${C.border}`,borderRadius:9,padding:"12px 14px",fontSize:14,width:"100%",outline:"none",fontFamily:"monospace",marginBottom:10};
-  const simulate=async()=>{setImporting(true);setErr("");try{if(!activeMine?.id)throw new Error("No active mine");const{error:upErr}=await supabase.from("visionlink_credentials").upsert({mine_id:activeMine.id,client_id:clientId,client_secret:secret,app_key:appKey,connected_at:new Date().toISOString()},{onConflict:"mine_id"});if(upErr)throw upErr;const{data:syncData,error:syncErr}=await supabase.functions.invoke("visionlink-sync",{body:{mine_id:activeMine.id}});if(syncErr)console.warn("VL sync (first run) error:",syncErr);setImporting(false);setImported(true);setTimeout(()=>setStep(3),800);}catch(e){setImporting(false);setErr(e.message||"Could not save credentials");console.error("VL setup:",e);}};
-  if(step===1)return <div style={{padding:"28px 20px",minHeight:"100vh",display:"flex",flexDirection:"column",justifyContent:"center"}} className="up">
-    <div style={{textAlign:"center",marginBottom:24}}>
-      <div style={{fontSize:52,marginBottom:8}}>📡</div>
-      <div style={{fontFamily:F,fontWeight:900,fontSize:24,color:C.accent}}>Connect CAT VisionLink</div>
-      <div style={{fontSize:12,color:C.muted,marginTop:4}}>Auto-import your entire fleet in seconds</div>
-    </div>
-    <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:14,padding:"16px",marginBottom:16}}>
-      <div style={{fontFamily:F,fontWeight:700,fontSize:13,color:C.text,marginBottom:12}}>What you'll need:</div>
-      {[["1","Contact your CAT dealer and request VisionLink API credentials","~1 business day"],["2","You'll receive a Client ID, Client Secret, and Application Key","via email"],["3","Paste them below and we'll import your fleet automatically","2 minutes"]].map(([n,t,s])=><div key={n} style={{display:"flex",gap:12,marginBottom:10,alignItems:"flex-start"}}><div style={{width:24,height:24,borderRadius:"50%",background:`${C.accent}22`,border:`1px solid ${C.accent}44`,display:"flex",alignItems:"center",justifyContent:"center",fontFamily:F,fontWeight:900,fontSize:12,color:C.accent,flexShrink:0}}>{n}</div><div><div style={{fontSize:13,color:C.text,lineHeight:1.4}}>{t}</div><div style={{fontSize:10,color:C.muted,marginTop:2}}>{s}</div></div></div>)}
-    </div>
-    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
-      <button onClick={onSkip} style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:12,padding:"14px",fontFamily:F,fontWeight:700,fontSize:14,color:C.muted,cursor:"pointer"}}>Skip for now</button>
-      <button onClick={()=>setStep(2)} style={{background:`linear-gradient(135deg,${C.accent},#d4881e)`,border:"none",borderRadius:12,padding:"14px",fontFamily:F,fontWeight:900,fontSize:14,color:"#000",cursor:"pointer"}}>I have credentials →</button>
-    </div>
-  </div>;
-  if(step===2)return <div style={{padding:"28px 20px",minHeight:"100vh",display:"flex",flexDirection:"column",justifyContent:"center"}} className="up">
-    <div style={{fontFamily:F,fontWeight:900,fontSize:22,color:C.accent,marginBottom:4}}>Enter VisionLink Credentials</div>
-    <div style={{fontSize:11,color:C.muted,marginBottom:18}}>Stored securely · never exposed to browser · server-side only</div>
-    <div style={{background:`${C.success}08`,border:`1px solid ${C.success}22`,borderRadius:10,padding:"10px 13px",marginBottom:16}}>
-      <div style={{fontSize:11,color:C.success,fontFamily:F,fontWeight:700}}>🔒 Your credentials are encrypted at rest and transmitted only via HTTPS from our server directly to CAT's API. They are never stored in the app or visible to any client.</div>
-    </div>
-    <div style={{fontSize:12,color:C.muted,marginBottom:5}}>Client ID</div>
-    <input value={clientId} onChange={e=>setClientId(e.target.value)} placeholder="e.g. mineops-demo-a1b2c3d4" style={{...inp,border:`1px solid ${clientId?C.success:C.border}`}}/>
-    <div style={{fontSize:12,color:C.muted,marginBottom:5}}>Client Secret</div>
-    <input type="password" value={secret} onChange={e=>setSecret(e.target.value)} placeholder="••••••••••••••••" style={{...inp,border:`1px solid ${secret?C.success:C.border}`}}/>
-    <div style={{fontSize:12,color:C.muted,marginBottom:5}}>Application Key</div>
-    <input value={appKey} onChange={e=>setAppKey(e.target.value)} placeholder="e.g. APPKEY-XYZ-12345" style={{...inp,border:`1px solid ${appKey?C.success:C.border}`}}/>
-    {err&&<div style={{background:`${C.danger}12`,border:`1px solid ${C.danger}33`,borderRadius:10,padding:"10px 13px",marginBottom:10}}><div style={{fontFamily:F,fontWeight:700,fontSize:13,color:C.danger}}>⚠ {err}</div></div>}
-    {imported&&<div style={{background:`${C.success}12`,border:`1px solid ${C.success}33`,borderRadius:10,padding:"10px 13px",marginBottom:10}}><div style={{fontFamily:F,fontWeight:700,fontSize:13,color:C.success}}>✅ Importing fleet from VisionLink…</div></div>}
-    <button onClick={simulate} disabled={importing||!clientId||!secret||!appKey} style={{width:"100%",background:clientId&&secret&&appKey?C.success:C.border,color:clientId&&secret&&appKey?"#000":C.muted,border:"none",borderRadius:12,padding:"15px",fontFamily:F,fontWeight:900,fontSize:18,cursor:"pointer",marginBottom:8,transition:"background .2s"}}>
-      {importing?"⏳ Connecting to VisionLink…":"Import Fleet →"}
-    </button>
-    <button onClick={()=>setStep(1)} style={{width:"100%",background:"none",border:"none",color:C.muted,padding:"10px",fontFamily:F,fontWeight:700,fontSize:13,cursor:"pointer"}}>← Back</button>
-  </div>;
-  // Step 3 — imported
-  return <div style={{padding:"28px 20px",minHeight:"100vh",display:"flex",flexDirection:"column",justifyContent:"center",textAlign:"center"}} className="up">
-    <div style={{fontSize:56,marginBottom:12}}>✅</div>
-    <div style={{fontFamily:F,fontWeight:900,fontSize:26,color:C.success,marginBottom:8}}>Fleet Imported!</div>
-    <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:14,padding:"16px",marginBottom:20,textAlign:"left"}}>
-      <div style={{fontFamily:F,fontWeight:700,fontSize:13,color:C.success,marginBottom:10}}>Machines found via VisionLink:</div>
-      {BASE_MACHINES.filter(m=>CAT_DEMO[m.id]).map(m=><div key={m.id} style={{display:"flex",justifyContent:"space-between",padding:"6px 0",borderBottom:`1px solid ${C.border}22`}}><span style={{fontSize:13,color:C.text,fontFamily:F,fontWeight:700}}>{m.model}</span><span style={{fontSize:11,color:C.success}}>✓ {CAT_DEMO[m.id]?.smh?.toLocaleString()} SMH</span></div>)}
-    </div>
-    <button onClick={onComplete} style={{width:"100%",background:`linear-gradient(135deg,${C.accent},#d4881e)`,color:"#000",border:"none",borderRadius:14,padding:"17px",fontFamily:F,fontWeight:900,fontSize:20,cursor:"pointer"}}>
-      Enter MineOps →
-    </button>
-  </div>;
-}
-
 // ── Photo Manager (admin/supervisor uploads reference photos) ─────────────
 // ── Compliance Hub ────────────────────────────────────────────────────────────
 // Training records, competent persons list, SDS library, induction forms.
@@ -4645,7 +4556,7 @@ function TodayLeaderboard({activeMine,remoteOperators}){
 // the old SettingsScreen and consolidates Add Machine + VisionLink Sync that
 // used to live as scattered menu items.
 
-function SetupHub({user,activeMine,allMachines,onClose,onNavPlants,onNavWorkplaceAreas,onNavExtinguisherLocations,onNavCheckItemConfig,onAddMachine,onPreshiftHistory}){
+function SetupHub({user,activeMine,allMachines,onClose,onNavPlants,onNavWorkplaceAreas,onNavExtinguisherLocations,onNavCheckItemConfig,onNavPeople,onNavShareCode,onAddMachine,onPreshiftHistory}){
   const Row=({icon,title,sub,onClick,color=C.text,right})=><button onClick={onClick} style={{width:"100%",background:C.card,border:`1px solid ${C.border}`,borderRadius:12,padding:"14px 15px",marginBottom:8,cursor:"pointer",display:"flex",alignItems:"center",gap:13,textAlign:"left"}}>
     <span style={{fontSize:22,width:30,textAlign:"center",flexShrink:0}}>{icon}</span>
     <div style={{flex:1,minWidth:0}}>
@@ -4659,6 +4570,10 @@ function SetupHub({user,activeMine,allMachines,onClose,onNavPlants,onNavWorkplac
   return<div style={{paddingBottom:80}}>
     <PageHdr title="Setup" sub={`Mine configuration · ${activeMine?.name||"demo"} · ${ROLES[user?.role]?.label||"admin"}`} back onBack={onClose}/>
     <div style={{padding:"4px 16px 14px"}}>
+      <SectionLabel label="Crew"/>
+      <Row icon="👷" title="People"                  sub="Roles · soft-remove · invite history"               onClick={onNavPeople}/>
+      <Row icon="🔗" title="Mine Code"               sub={`${activeMine?.code||"——————"} · tap to share or regenerate`} onClick={onNavShareCode}/>
+
       <SectionLabel label="Areas & locations"/>
       <Row icon="🗺"  title="Workplace Areas"        sub="MSHA exam areas · pit benches · crusher · roads"     onClick={onNavWorkplaceAreas}/>
       <Row icon="🧯" title="Extinguisher Locations" sub="Places that have extinguishers · for monthly checks"  onClick={onNavExtinguisherLocations}/>
@@ -5158,6 +5073,327 @@ function isValidEmail(e){return/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test((e||"").trim())
 // Unified sign-in / sign-up / magic-link / forgot-password / reset-password.
 // Mode is internal state; URL-detected PASSWORD_RECOVERY events flip to
 // "reset" via the `forceMode` prop set by the parent.
+// ── People Screen (admin / minemanager) ───────────────────────────────────
+// Lists every operator in the active mine. Inline role change + soft-remove.
+function PeopleScreen({activeMine,user,onBack}){
+  const[items,setItems]=useState([]);
+  const[loading,setLoading]=useState(true);
+  const[err,setErr]=useState("");
+  const[saving,setSaving]=useState(null); // operator id currently saving
+  const[bump,setBump]=useState(0);
+
+  useEffect(()=>{
+    if(!activeMine?.id){setLoading(false);return;}
+    let cancelled=false;
+    (async()=>{
+      try{
+        const{data,error}=await supabase.from("operators")
+          .select("id,name,role,status,machine_id,auth_id,created_at,last_active_at,is_active")
+          .eq("mine_id",activeMine.id)
+          .order("created_at",{ascending:true});
+        if(error)throw error;
+        if(!cancelled)setItems(data||[]);
+      }catch(e){console.error("people:",e);setErr("Couldn't load people.");}
+      finally{if(!cancelled)setLoading(false);}
+    })();
+    return()=>{cancelled=true;};
+  },[activeMine?.id,bump]);
+
+  const ROLE_OPTS=[
+    {id:"operator",label:"Operator",color:C.info},
+    {id:"supervisor",label:"Supervisor",color:C.amber},
+    {id:"minemanager",label:"Mine Manager",color:C.purple},
+    {id:"admin",label:"Admin",color:C.danger},
+  ];
+  const updateRole=async(op,newRole)=>{
+    if(op.role===newRole)return;
+    setSaving(op.id);
+    try{
+      const{error}=await supabase.from("operators").update({role:newRole}).eq("id",op.id);
+      if(error)throw error;
+      setBump(n=>n+1);
+    }catch(e){console.error(e);alert("Could not change role: "+(e.message||e));}
+    finally{setSaving(null);}
+  };
+  const setActive=async(op,nextActive)=>{
+    if(op.id===user?.id&&!nextActive){alert("You can't remove yourself. Ask another admin.");return;}
+    if(!nextActive&&!confirm(`Remove ${op.name} from ${activeMine.name}? Their past records stay; they'll lose access until reactivated.`))return;
+    setSaving(op.id);
+    try{
+      const{error}=await supabase.from("operators").update({is_active:nextActive}).eq("id",op.id);
+      if(error)throw error;
+      setBump(n=>n+1);
+    }catch(e){console.error(e);alert("Could not "+(nextActive?"reactivate":"remove")+": "+(e.message||e));}
+    finally{setSaving(null);}
+  };
+  const fmtLast=ts=>{
+    if(!ts)return"Never";
+    const ago=Date.now()-new Date(ts).getTime();
+    if(ago<60_000)return"Just now";
+    if(ago<3_600_000)return`${Math.floor(ago/60_000)}m ago`;
+    if(ago<86_400_000)return`${Math.floor(ago/3_600_000)}h ago`;
+    if(ago<7*86_400_000)return`${Math.floor(ago/86_400_000)}d ago`;
+    return new Date(ts).toLocaleDateString();
+  };
+
+  const active=items.filter(o=>o.is_active!==false);
+  const removed=items.filter(o=>o.is_active===false);
+
+  return<div style={{paddingBottom:80}}>
+    <PageHdr title="People" sub={`${active.length} active · ${removed.length} removed · ${activeMine?.name||"—"}`} back onBack={onBack}/>
+    <div style={{padding:"12px 16px"}}>
+      {loading?<div style={{textAlign:"center",padding:40,color:C.muted,fontSize:13}}>Loading…</div>:
+       err?<div style={{background:`${C.danger}15`,border:`1px solid ${C.danger}44`,borderRadius:10,padding:"10px 12px",fontSize:12,color:C.danger}}>{err}</div>:
+       items.length===0?<div style={{textAlign:"center",padding:"40px 22px"}}>
+        <div style={{fontSize:46,marginBottom:10,opacity:.6}}>👷</div>
+        <div style={{fontFamily:F,fontWeight:900,fontSize:18,color:C.text,marginBottom:6}}>No one's joined yet</div>
+        <div style={{fontSize:12,color:C.muted,lineHeight:1.6,maxWidth:280,margin:"0 auto"}}>Share your mine code so the crew can join. Find it in Setup → Mine Code.</div>
+      </div>:<>
+        {active.map(op=>{
+          const role=ROLE_OPTS.find(r=>r.id===op.role)||{label:op.role,color:C.muted};
+          const isSelf=op.id===user?.id;
+          const isSaving=saving===op.id;
+          const initials=(op.name||"?").split(/\s+/).map(w=>w[0]).join("").slice(0,2).toUpperCase();
+          return<div key={op.id} style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:12,padding:"12px 14px",marginBottom:8,opacity:isSaving?.5:1}}>
+            <div style={{display:"flex",alignItems:"center",gap:12}}>
+              <div style={{width:38,height:38,borderRadius:"50%",background:`${role.color}22`,border:`2px solid ${role.color}44`,display:"flex",alignItems:"center",justifyContent:"center",fontFamily:F,fontWeight:900,fontSize:13,color:role.color,flexShrink:0}}>{initials}</div>
+              <div style={{flex:1,minWidth:0}}>
+                <div style={{fontFamily:F,fontWeight:900,fontSize:14,color:C.text,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{op.name}{isSelf&&<span style={{color:C.muted,fontWeight:400,fontSize:11,marginLeft:6}}>(you)</span>}</div>
+                <div style={{fontSize:11,color:C.muted,marginTop:2}}>Last active {fmtLast(op.last_active_at||op.created_at)}</div>
+              </div>
+            </div>
+            <div style={{display:"flex",gap:6,flexWrap:"wrap",marginTop:10}}>
+              {ROLE_OPTS.map(r=>{
+                const sel=op.role===r.id;
+                return<button key={r.id} onClick={()=>updateRole(op,r.id)} disabled={isSaving||isSelf&&op.role==="admin"&&r.id!=="admin"}
+                  style={{flex:"1 1 auto",background:sel?`${r.color}22`:"transparent",border:`1px solid ${sel?r.color:C.border}`,borderRadius:8,padding:"5px 9px",color:sel?r.color:C.muted,fontSize:10,fontFamily:F,fontWeight:700,cursor:isSaving?"default":"pointer",letterSpacing:".04em"}}>{r.label}</button>;
+              })}
+              {!isSelf&&<button onClick={()=>setActive(op,false)} disabled={isSaving}
+                style={{background:`${C.danger}15`,border:`1px solid ${C.danger}44`,borderRadius:8,padding:"5px 9px",color:C.danger,fontSize:10,fontFamily:F,fontWeight:700,cursor:isSaving?"default":"pointer",letterSpacing:".04em"}}>Remove</button>}
+            </div>
+          </div>;
+        })}
+
+        {removed.length>0&&<>
+          <div style={{fontSize:10,color:C.muted,fontFamily:F,fontWeight:700,letterSpacing:".1em",textTransform:"uppercase",margin:"18px 4px 8px"}}>Removed · {removed.length}</div>
+          {removed.map(op=>{
+            const role=ROLE_OPTS.find(r=>r.id===op.role)||{label:op.role,color:C.muted};
+            const isSaving=saving===op.id;
+            return<div key={op.id} style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:12,padding:"11px 14px",marginBottom:8,opacity:.6,display:"flex",alignItems:"center",gap:12}}>
+              <div style={{flex:1,minWidth:0}}>
+                <div style={{fontFamily:F,fontWeight:700,fontSize:13,color:C.muted,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{op.name}</div>
+                <div style={{fontSize:10,color:C.muted,marginTop:2}}>{role.label} · removed</div>
+              </div>
+              <button onClick={()=>setActive(op,true)} disabled={isSaving}
+                style={{background:`${C.success}15`,border:`1px solid ${C.success}44`,borderRadius:8,padding:"5px 10px",color:C.success,fontSize:11,fontFamily:F,fontWeight:700,cursor:isSaving?"default":"pointer"}}>Reactivate</button>
+            </div>;
+          })}
+        </>}
+      </>}
+    </div>
+  </div>;
+}
+
+// ── Share Code Hub (admin) ────────────────────────────────────────────────
+// Lets admins view, copy, share, and regenerate the mine's share code.
+function ShareCodeHub({activeMine,onBack,onRegenerate}){
+  const[regenerating,setRegenerating]=useState(false);
+  const[err,setErr]=useState("");
+  const regen=async()=>{
+    if(!confirm("Regenerate the mine code? Anyone with the old code won't be able to join — they'll need the new one.\n\nExisting members aren't affected."))return;
+    setRegenerating(true);setErr("");
+    try{
+      const chars="ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+      let next="";for(let i=0;i<6;i++)next+=chars[Math.floor(Math.random()*chars.length)];
+      const{error}=await supabase.from("mines").update({code:next}).eq("id",activeMine.id);
+      if(error)throw error;
+      onRegenerate&&onRegenerate(next);
+    }catch(e){console.error("regen code:",e);setErr(e.message||"Could not regenerate code");}
+    finally{setRegenerating(false);}
+  };
+  if(!activeMine)return null;
+  return<div style={{paddingBottom:80,position:"relative"}}>
+    <ShareCodeScreen mine={activeMine} onBack={onBack} heroTitle="🔗" heroLine="Mine code"/>
+    <div style={{padding:"0 22px 80px"}}>
+      {err&&<div style={{background:`${C.danger}15`,border:`1px solid ${C.danger}44`,borderRadius:10,padding:"10px 12px",marginTop:14,fontSize:12,color:C.danger}}>{err}</div>}
+      <button onClick={regen} disabled={regenerating}
+        style={{width:"100%",background:"transparent",border:`1px solid ${C.danger}55`,borderRadius:12,padding:"14px",color:C.danger,fontFamily:F,fontWeight:700,fontSize:14,cursor:regenerating?"default":"pointer",marginTop:14,letterSpacing:".02em"}}>
+        {regenerating?"Regenerating…":"🔄 Regenerate code"}
+      </button>
+      <div style={{fontSize:11,color:C.muted,textAlign:"center",marginTop:8,lineHeight:1.5}}>Use this if the code has leaked. Existing members keep their access — only future joiners need the new code.</div>
+    </div>
+  </div>;
+}
+
+// ── Account Screen ────────────────────────────────────────────────────────
+// User-scoped: name + email + memberships + change password + delete account.
+function AccountScreen({user,activeMine,onBack,onSignOut,onProfileChanged}){
+  const{session}=useSupabase();
+  const[name,setName]=useState(user?.name||"");
+  const[savingName,setSavingName]=useState(false);
+  const[nameSaved,setNameSaved]=useState(false);
+  const[sendingReset,setSendingReset]=useState(false);
+  const[resetSent,setResetSent]=useState(false);
+  const[err,setErr]=useState("");
+  const[deleting,setDeleting]=useState(false);
+  const[deleteConfirm,setDeleteConfirm]=useState("");
+  const[mines,setMines]=useState([]);
+  const[loadingMines,setLoadingMines]=useState(true);
+
+  useEffect(()=>{
+    if(!session?.user?.id){setLoadingMines(false);return;}
+    let cancelled=false;
+    (async()=>{
+      try{
+        const{data:ops}=await supabase.from("operators")
+          .select("mine_id,role,is_active").eq("auth_id",session.user.id);
+        const ids=[...new Set((ops||[]).map(o=>o.mine_id))];
+        const{data:mineRows}=ids.length?await supabase.from("mines").select("id,name,location").in("id",ids):{data:[]};
+        const mineMap=new Map((mineRows||[]).map(m=>[m.id,m]));
+        const enriched=(ops||[]).map(o=>({...o,mine:mineMap.get(o.mine_id)})).filter(x=>x.mine);
+        if(!cancelled)setMines(enriched);
+      }catch(e){console.error("acct mines:",e);}
+      finally{if(!cancelled)setLoadingMines(false);}
+    })();
+    return()=>{cancelled=true;};
+  },[session?.user?.id]);
+
+  const saveName=async()=>{
+    const next=name.trim();
+    if(!next||next===user?.name||savingName)return;
+    setSavingName(true);setErr("");setNameSaved(false);
+    try{
+      // Update the current mine's operator row + auth metadata so it appears across mines.
+      const tasks=[
+        supabase.auth.updateUser({data:{name:next}}),
+      ];
+      if(user?.id)tasks.push(supabase.from("operators").update({name:next}).eq("id",user.id));
+      const results=await Promise.all(tasks);
+      const errs=results.map(r=>r.error).filter(Boolean);
+      if(errs.length)throw errs[0];
+      setNameSaved(true);setTimeout(()=>setNameSaved(false),1800);
+      onProfileChanged&&onProfileChanged();
+    }catch(e){console.error("save name:",e);setErr(friendlyAuthError(e));}
+    finally{setSavingName(false);}
+  };
+  const sendReset=async()=>{
+    if(!session?.user?.email||sendingReset)return;
+    setSendingReset(true);setErr("");
+    try{
+      const{error}=await supabase.auth.resetPasswordForEmail(session.user.email,{redirectTo:window.location.origin});
+      if(error)throw error;
+      setResetSent(true);setTimeout(()=>setResetSent(false),3500);
+    }catch(e){setErr(friendlyAuthError(e));}
+    finally{setSendingReset(false);}
+  };
+  const doDelete=async()=>{
+    if(deleteConfirm!=="DELETE"||deleting)return;
+    setDeleting(true);setErr("");
+    try{
+      // Soft delete: mark every membership inactive. The auth user remains; full
+      // deletion needs service-role and lives in a future Edge Function.
+      await supabase.from("operators").update({is_active:false}).eq("auth_id",session.user.id);
+      await supabase.auth.signOut();
+      try{localStorage.removeItem("mineops:activeMineId");}catch(e){}
+      onSignOut&&onSignOut();
+    }catch(e){console.error("delete acct:",e);setErr(friendlyAuthError(e));setDeleting(false);}
+  };
+
+  const inp={background:C.surface,color:C.text,border:`1px solid ${C.border}`,borderRadius:9,padding:"11px 13px",fontSize:14,width:"100%",outline:"none",boxSizing:"border-box",fontFamily:"inherit"};
+
+  return<div style={{paddingBottom:80}}>
+    <PageHdr title="Account" sub={session?.user?.email||"—"} back onBack={onBack}/>
+    <div style={{padding:"14px 16px"}}>
+      {/* Profile */}
+      <div style={{fontSize:10,color:C.muted,fontFamily:F,fontWeight:700,letterSpacing:".1em",textTransform:"uppercase",padding:"4px 4px 8px"}}>Profile</div>
+      <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:12,padding:"14px",marginBottom:14}}>
+        <div style={{fontSize:11,color:C.muted,marginBottom:5,fontFamily:F,fontWeight:700,letterSpacing:".04em",textTransform:"uppercase"}}>Name</div>
+        <input value={name} onChange={e=>setName(e.target.value)} style={{...inp,marginBottom:8}}/>
+        <div style={{fontSize:11,color:C.muted,marginBottom:5,fontFamily:F,fontWeight:700,letterSpacing:".04em",textTransform:"uppercase"}}>Email</div>
+        <input value={session?.user?.email||""} disabled style={{...inp,opacity:.7,marginBottom:10}}/>
+        <button onClick={saveName} disabled={!name.trim()||name.trim()===user?.name||savingName}
+          style={{width:"100%",background:!name.trim()||name.trim()===user?.name?C.border:C.success,color:!name.trim()||name.trim()===user?.name?C.muted:"#000",border:"none",borderRadius:9,padding:"10px",fontFamily:F,fontWeight:900,fontSize:13,cursor:"pointer"}}>
+          {savingName?"Saving…":nameSaved?"✓ Saved":"Save name"}
+        </button>
+      </div>
+
+      {/* Memberships */}
+      <div style={{fontSize:10,color:C.muted,fontFamily:F,fontWeight:700,letterSpacing:".1em",textTransform:"uppercase",padding:"4px 4px 8px"}}>Memberships</div>
+      {loadingMines?<div style={{padding:"14px",color:C.muted,fontSize:12}}>Loading…</div>:
+       mines.length===0?<div style={{padding:"14px",color:C.muted,fontSize:12}}>You're not a member of any mine yet.</div>:
+       mines.map(m=>{
+         const role=ROLES[m.role]||{label:m.role,color:C.muted};
+         const removed=m.is_active===false;
+         return<div key={m.mine_id} style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:10,padding:"11px 13px",marginBottom:8,opacity:removed?.55:1,display:"flex",alignItems:"center",gap:12}}>
+           <div style={{flex:1,minWidth:0}}>
+             <div style={{fontFamily:F,fontWeight:700,fontSize:13,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{m.mine.name}{m.mine_id===activeMine?.id&&<span style={{color:C.success,fontSize:10,marginLeft:8,fontWeight:900,letterSpacing:".04em"}}>· ACTIVE</span>}</div>
+             {m.mine.location&&<div style={{fontSize:11,color:C.muted}}>{m.mine.location}</div>}
+           </div>
+           <span style={{background:`${role.color}22`,color:role.color,border:`1px solid ${role.color}44`,borderRadius:6,padding:"2px 8px",fontSize:10,fontFamily:F,fontWeight:700,whiteSpace:"nowrap"}}>{removed?"REMOVED":role.label.toUpperCase()}</span>
+         </div>;
+       })}
+
+      {/* Security */}
+      <div style={{fontSize:10,color:C.muted,fontFamily:F,fontWeight:700,letterSpacing:".1em",textTransform:"uppercase",padding:"18px 4px 8px"}}>Security</div>
+      <button onClick={sendReset} disabled={sendingReset||!session?.user?.email}
+        style={{width:"100%",background:C.card,border:`1px solid ${C.border}`,borderRadius:12,padding:"13px 15px",color:C.text,fontFamily:F,fontWeight:700,fontSize:14,cursor:sendingReset?"default":"pointer",marginBottom:8,textAlign:"left",display:"flex",alignItems:"center",gap:12}}>
+        <span style={{fontSize:20}}>🔑</span>
+        <div style={{flex:1}}>{sendingReset?"Sending reset link…":resetSent?"✓ Check your inbox":"Change password"}<div style={{fontSize:11,color:C.muted,fontWeight:400,marginTop:2}}>We'll email you a reset link.</div></div>
+      </button>
+      <button onClick={onSignOut}
+        style={{width:"100%",background:C.card,border:`1px solid ${C.border}`,borderRadius:12,padding:"13px 15px",color:C.text,fontFamily:F,fontWeight:700,fontSize:14,cursor:"pointer",marginBottom:14,textAlign:"left",display:"flex",alignItems:"center",gap:12}}>
+        <span style={{fontSize:20}}>👋</span>
+        <div style={{flex:1}}>Sign out<div style={{fontSize:11,color:C.muted,fontWeight:400,marginTop:2}}>You'll need to sign back in to use the app.</div></div>
+      </button>
+
+      {/* Danger zone */}
+      <div style={{fontSize:10,color:C.danger,fontFamily:F,fontWeight:700,letterSpacing:".1em",textTransform:"uppercase",padding:"4px 4px 8px"}}>Danger zone</div>
+      <div style={{background:`${C.danger}08`,border:`1px solid ${C.danger}33`,borderRadius:12,padding:"14px"}}>
+        <div style={{fontFamily:F,fontWeight:700,fontSize:13,color:C.danger,marginBottom:6}}>Delete account</div>
+        <div style={{fontSize:12,color:C.textSub,lineHeight:1.5,marginBottom:10}}>You'll be removed from every mine and signed out. Records you signed (pre-starts, exams, tonnage) stay with the mine for compliance — only your access is revoked.</div>
+        <div style={{fontSize:11,color:C.muted,marginBottom:6}}>Type <b style={{color:C.danger,letterSpacing:".1em"}}>DELETE</b> to confirm</div>
+        <input value={deleteConfirm} onChange={e=>setDeleteConfirm(e.target.value)} placeholder="DELETE"
+          style={{...inp,border:`1px solid ${deleteConfirm==="DELETE"?C.danger:C.border}`,marginBottom:10,letterSpacing:".1em",fontFamily:'"SF Mono","Menlo",monospace'}}/>
+        {err&&<div style={{fontSize:12,color:C.danger,marginBottom:8}}>{err}</div>}
+        <button onClick={doDelete} disabled={deleteConfirm!=="DELETE"||deleting}
+          style={{width:"100%",background:deleteConfirm==="DELETE"&&!deleting?C.danger:C.border,color:deleteConfirm==="DELETE"&&!deleting?"#fff":C.muted,border:"none",borderRadius:10,padding:"12px",fontFamily:F,fontWeight:900,fontSize:14,cursor:deleteConfirm==="DELETE"&&!deleting?"pointer":"default"}}>
+          {deleting?"Deleting…":"Delete my account"}
+        </button>
+      </div>
+    </div>
+  </div>;
+}
+
+// ── Email Verification Banner ─────────────────────────────────────────────
+// Non-blocking. Shown at the top of the app when the auth user's email
+// isn't yet confirmed. Stays dismissed (per session) once the user closes it.
+function EmailVerifyBanner({email,emailConfirmed}){
+  const[dismissed,setDismissed]=useState(false);
+  const[resent,setResent]=useState(false);
+  const[sending,setSending]=useState(false);
+  useEffect(()=>{
+    try{if(sessionStorage.getItem("mineops:verifyBannerDismissed")==="1")setDismissed(true);}catch(e){}
+  },[]);
+  if(emailConfirmed||dismissed||!email)return null;
+  const dismiss=()=>{setDismissed(true);try{sessionStorage.setItem("mineops:verifyBannerDismissed","1");}catch(e){}};
+  const resend=async()=>{
+    if(sending)return;setSending(true);
+    try{
+      await supabase.auth.resend({type:"signup",email,options:{emailRedirectTo:window.location.origin}});
+      setResent(true);setTimeout(()=>setResent(false),3000);
+    }catch(e){console.error("resend verify:",e);}
+    finally{setSending(false);}
+  };
+  return<div style={{background:`${C.amber}15`,borderBottom:`1px solid ${C.amber}44`,padding:"9px 14px",display:"flex",alignItems:"center",gap:10,flexShrink:0}}>
+    <span style={{fontSize:16}}>✉️</span>
+    <div style={{flex:1,minWidth:0,fontSize:11,color:C.text,lineHeight:1.4}}>
+      Verify your email to enable password reset — check your inbox.
+    </div>
+    <button onClick={resend} disabled={sending} style={{background:"none",border:`1px solid ${C.amber}55`,borderRadius:7,padding:"4px 10px",color:C.amber,fontSize:10,fontFamily:F,fontWeight:700,cursor:sending?"default":"pointer",flexShrink:0}}>{sending?"…":resent?"Sent":"Resend"}</button>
+    <button onClick={dismiss} style={{background:"none",border:"none",color:C.muted,fontSize:14,cursor:"pointer",padding:"2px 6px",flexShrink:0}}>✕</button>
+  </div>;
+}
+
 function AuthScreen({forceMode,onResetComplete}){
   const[mode,setMode]=useState(forceMode||"signIn"); // signIn|signUp|magic|forgot|reset
   useEffect(()=>{if(forceMode)setMode(forceMode);},[forceMode]);
@@ -5556,8 +5792,8 @@ function MineOpsApp() {
   }
   return <div style={{maxWidth:420,margin:"0 auto",height:"100vh",display:"flex",flexDirection:"column",background:C.bg,position:"relative",overflow:"hidden"}}>
     {showSignOut&&<SignOutConfirm onConfirm={handleSignOut} onCancel={()=>setShowSignOut(false)}/>}
-    {menuOpen&&<MenuOverlay user={user} allMachines={allMachines} activeMine={activeMine} onNav={t=>{if(["setup","tickets","reportIssue","ticketDetail","workplaceExam","workplaceAreas","fireInspect","extinguisherLocations","minePicker"].includes(t)){setFlow(t);}else{setTab(t);setFlow("app");}}} onVehicleCheck={()=>setFlow("vehicleCheck")} onClose={()=>setMenuOpen(false)}/>}
-    {user&&!["auth","onboarding","createMine","joinMine","minePicker","subscription","vlSetup","login","app","vehicleCheck","addMachine","setup","plants","inspHistory","extinguisherLocations","workplaceAreas","checkItemConfig"].includes(flow)&&
+    {menuOpen&&<MenuOverlay user={user} allMachines={allMachines} activeMine={activeMine} onNav={t=>{if(["setup","tickets","reportIssue","ticketDetail","workplaceExam","workplaceAreas","fireInspect","extinguisherLocations","minePicker","account","people","shareCode"].includes(t)){setFlow(t);}else{setTab(t);setFlow("app");}}} onVehicleCheck={()=>setFlow("vehicleCheck")} onClose={()=>setMenuOpen(false)}/>}
+    {user&&!["auth","onboarding","createMine","joinMine","minePicker","subscription","vlSetup","login","app","vehicleCheck","addMachine","setup","plants","inspHistory","extinguisherLocations","workplaceAreas","checkItemConfig","account","people","shareCode"].includes(flow)&&
       <div style={{flexShrink:0,background:`${C.surface}f2`,backdropFilter:"blur(10px)",borderBottom:`1px solid ${C.border}`,padding:"9px 15px",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
         <div style={{display:"flex",alignItems:"center",gap:10}}>
           <button onClick={()=>setMenuOpen(true)} style={{background:"none",border:`1px solid ${C.border}`,borderRadius:8,padding:"5px 10px",color:C.muted,fontSize:16,cursor:"pointer",lineHeight:1}}>☰</button>
@@ -5575,7 +5811,10 @@ function MineOpsApp() {
     {flow==="machines"&&<div style={{flex:1,overflowY:"auto"}}><MachineSelectScreen allMachines={allMachines} catDemo={catDemo} isAdmin={user?.role==="admin"} activeMine={activeMine} activeShiftId={activeShiftId} user={user} onAddMachine={()=>setFlow("addMachine")} onComplete={()=>setFlow("app")}/></div>}
     {flow==="addMachine"&&<div style={{flex:1,overflowY:"auto"}}><AddMachineScreen allMachines={allMachines} onAdd={handleAddMachine} onBack={()=>setFlow("app")}/></div>}
     {flow==="inspHistory"&&<div style={{flex:1,overflowY:"auto"}}><PreshiftHistoryScreen mineId={activeMine?.id} onBack={()=>setFlow("setup")}/></div>}
-    {flow==="setup"&&<div style={{flex:1,overflowY:"auto"}}><SetupHub user={user} activeMine={activeMine} allMachines={allMachines} onClose={()=>setFlow("app")} onNavPlants={()=>setFlow("plants")} onNavWorkplaceAreas={()=>setFlow("workplaceAreas")} onNavExtinguisherLocations={()=>setFlow("extinguisherLocations")} onNavCheckItemConfig={()=>setFlow("checkItemConfig")} onAddMachine={()=>setFlow("addMachine")} onPreshiftHistory={()=>setFlow("inspHistory")}/></div>}
+    {flow==="setup"&&<div style={{flex:1,overflowY:"auto"}}><SetupHub user={user} activeMine={activeMine} allMachines={allMachines} onClose={()=>setFlow("app")} onNavPlants={()=>setFlow("plants")} onNavWorkplaceAreas={()=>setFlow("workplaceAreas")} onNavExtinguisherLocations={()=>setFlow("extinguisherLocations")} onNavCheckItemConfig={()=>setFlow("checkItemConfig")} onNavPeople={()=>setFlow("people")} onNavShareCode={()=>setFlow("shareCode")} onAddMachine={()=>setFlow("addMachine")} onPreshiftHistory={()=>setFlow("inspHistory")}/></div>}
+    {flow==="people"&&<div style={{flex:1,overflowY:"auto"}}><PeopleScreen activeMine={activeMine} user={user} onBack={()=>setFlow("setup")}/></div>}
+    {flow==="shareCode"&&<div style={{flex:1,overflowY:"auto"}}><ShareCodeHub activeMine={activeMine} onBack={()=>setFlow("setup")} onRegenerate={code=>{setActiveMine(m=>m?{...m,code}:m);setProfileBump(n=>n+1);}}/></div>}
+    {flow==="account"&&<div style={{flex:1,overflowY:"auto"}}><AccountScreen user={user} activeMine={activeMine} onBack={()=>setFlow("app")} onSignOut={handleSignOut} onProfileChanged={()=>setProfileBump(n=>n+1)}/></div>}
     {flow==="checkItemConfig"&&<div style={{flex:1,overflowY:"auto"}}><CheckItemConfigScreen activeMine={activeMine} onBack={()=>setFlow("setup")}/></div>}
     {flow==="plants"&&<div style={{flex:1,overflowY:"auto"}}><PlantsAdminScreen activeMine={activeMine} onBack={()=>setFlow("setup")}/></div>}
     {flow==="extinguisherLocations"&&<div style={{flex:1,overflowY:"auto"}}><ExtinguisherLocationsAdminScreen activeMine={activeMine} onBack={()=>setFlow("setup")}/></div>}
@@ -5586,6 +5825,7 @@ function MineOpsApp() {
     {flow==="tickets"&&<div style={{flex:1,overflowY:"auto"}}><HandoverTicketsScreen activeMine={activeMine} user={user} allMachines={allMachines} onCreate={()=>setFlow("reportIssue")} onSelect={t=>{window.__currentTicketId=t.id;setFlow("ticketDetail");}} onBack={()=>setFlow("app")}/></div>}
     {flow==="ticketDetail"&&<div style={{flex:1,overflowY:"auto"}}><TicketDetailScreen ticketId={window.__currentTicketId} activeMine={activeMine} user={user} allMachines={allMachines} onBack={()=>setFlow("tickets")}/></div>}
     {(flow==="app"||flow==="vehicleCheck")&&<>
+      <EmailVerifyBanner email={session?.user?.email} emailConfirmed={!!session?.user?.email_confirmed_at}/>
       <div style={{flexShrink:0,background:`${C.surface}f2`,backdropFilter:"blur(10px)",borderBottom:`1px solid ${C.border}`,padding:"9px 15px",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
         <div style={{display:"flex",alignItems:"center",gap:10}}>
           <button onClick={()=>setMenuOpen(true)} style={{background:"none",border:`1px solid ${C.border}`,borderRadius:8,padding:"5px 10px",color:C.muted,fontSize:16,cursor:"pointer",lineHeight:1}}>☰</button>
