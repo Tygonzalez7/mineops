@@ -4,12 +4,17 @@ const supabase = createClient(import.meta.env.VITE_SUPABASE_URL, import.meta.env
 const AuthCtx = createContext(null)
 function AuthProvider({ children }) {
   const [session, setSession] = useState(undefined)
+  const [authEvent, setAuthEvent] = useState(null) // 'PASSWORD_RECOVERY' | 'SIGNED_IN' | ...
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => setSession(data.session))
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_e, s) => setSession(s))
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, s) => {
+      setSession(s)
+      setAuthEvent(event)
+    })
     return () => subscription.unsubscribe()
   }, [])
-  return <AuthCtx.Provider value={{ session, supabase }}>{children}</AuthCtx.Provider>
+  const clearAuthEvent = () => setAuthEvent(null)
+  return <AuthCtx.Provider value={{ session, supabase, authEvent, clearAuthEvent }}>{children}</AuthCtx.Provider>
 }
 function useSupabase() { return useContext(AuthCtx) }
 
@@ -4742,10 +4747,13 @@ function OnboardingScreen({onEnterDemo,onJoinMine,onCreateMine,onSignIn}){
 }
 
 function CreateMineFlow({onComplete,onBack}){
-  const[step,setStep]=useState(1); // 1=account 2=mine setup 3=crushers 4=code
-  const[email,setEmail]=useState("");const[pass,setPass]=useState("");const[pass2,setPass2]=useState("");
+  const{session}=useSupabase();
+  // If we already have an authenticated session (new clean flow), skip the
+  // legacy step-1 account form entirely — start at mine setup.
+  const[step,setStep]=useState(session?2:1); // 1=account 2=mine setup 3=crushers 4=code
+  const[email,setEmail]=useState(session?.user?.email||"");const[pass,setPass]=useState("");const[pass2,setPass2]=useState("");
   const[mineName,setMineName]=useState("");const[location,setLocation]=useState("");
-  const[adminName,setAdminName]=useState("");
+  const[adminName,setAdminName]=useState(session?.user?.user_metadata?.name||"");
   const[numCrushers,setNumCrushers]=useState(1);
   const[code]=useState(()=>Math.random().toString(36).slice(2,8).toUpperCase());
   const[creating,setCreating]=useState(false);
@@ -4813,28 +4821,33 @@ function CreateMineFlow({onComplete,onBack}){
     <button disabled={creating} onClick={async()=>{
       setCreating(true); setCreateErr("");
       try {
-        const { data: auth, error: authErr } = await supabase.auth.signUp({
-          email, password: pass,
-          options: { data: { name: adminName } },
-        });
-        if (authErr) throw authErr;
-        if (!auth?.user) throw new Error("Sign-up returned no user");
-        // Force a session so auth.uid() is set for the inserts below
-        const { error: siErr } = await supabase.auth.signInWithPassword({ email, password: pass });
-        if (siErr) throw siErr;
+        let authUserId=session?.user?.id||null;
+        if(!authUserId){
+          const { data: auth, error: authErr } = await supabase.auth.signUp({
+            email, password: pass,
+            options: { data: { name: adminName }, emailRedirectTo: window.location.origin },
+          });
+          if (authErr) throw authErr;
+          if (!auth?.user) throw new Error("Sign-up returned no user");
+          // Force a session so auth.uid() is set for the inserts below.
+          const { error: siErr } = await supabase.auth.signInWithPassword({ email, password: pass });
+          if (siErr) throw siErr;
+          authUserId=auth.user.id;
+        }
         const { data: mine, error: mineErr } = await supabase.from("mines").insert({
-          name: mineName, location, code, plan: "starter", owner_id: auth.user.id,
+          name: mineName, location, code, plan: "starter", owner_id: authUserId,
         }).select().single();
         if (mineErr) throw mineErr;
         const { error: opErr } = await supabase.from("operators").insert({
-          auth_id: auth.user.id, mine_id: mine.id, name: adminName,
+          auth_id: authUserId, mine_id: mine.id, name: adminName,
           role: "admin", status: "active",
         });
         if (opErr) throw opErr;
-        onComplete({ ...mine, mineName: mine.name, adminName, email });
+        try{localStorage.setItem("mineops:activeMineId",mine.id);}catch(e){}
+        onComplete({ ...mine, mineName: mine.name, adminName, email: email||session?.user?.email });
       } catch (err) {
         console.error("Create mine failed:", err);
-        setCreateErr(err.message || "Something went wrong. Try again.");
+        setCreateErr(friendlyAuthError(err));
         setCreating(false);
       }
     }} style={{width:"100%",background:creating?C.border:`linear-gradient(135deg,${C.accent},#d4881e)`,color:creating?C.muted:"#000",border:"none",borderRadius:14,padding:"17px",fontFamily:F,fontWeight:900,fontSize:20,cursor:creating?"default":"pointer"}}>
@@ -4844,10 +4857,11 @@ function CreateMineFlow({onComplete,onBack}){
 }
 
 function JoinMineFlow({onComplete,onBack}){
+  const{session}=useSupabase();
   const[step,setStep]=useState(1); // 1=find mine 2=account 3=role 4=pending
   const[search,setSearch]=useState("");const[code,setCode]=useState("");
   const[foundMine,setFoundMine]=useState(null);const[searchErr,setSearchErr]=useState("");
-  const[name,setName]=useState("");const[email,setEmail]=useState("");const[pass,setPass]=useState("");
+  const[name,setName]=useState(session?.user?.user_metadata?.name||"");const[email,setEmail]=useState(session?.user?.email||"");const[pass,setPass]=useState("");
   const[role,setRole]=useState(null);const[machine,setMachine]=useState(null);
   const[searchLoading,setSearchLoading]=useState(false);
   const[joining,setJoining]=useState(false);
@@ -4884,7 +4898,7 @@ function JoinMineFlow({onComplete,onBack}){
       </div>
       <div style={{display:"flex",gap:8,fontSize:11,color:C.muted}}><span>👷 {foundMine.operators} operators</span><span>🚛 {foundMine.machines} machines</span></div>
     </div>}
-    <button onClick={()=>foundMine?setStep(2):searchMine()} style={{width:"100%",background:foundMine?C.success:C.accent,color:"#000",border:"none",borderRadius:12,padding:"15px",fontFamily:F,fontWeight:900,fontSize:18,cursor:"pointer",transition:"background .2s"}}>
+    <button onClick={()=>foundMine?setStep(session?3:2):searchMine()} style={{width:"100%",background:foundMine?C.success:C.accent,color:"#000",border:"none",borderRadius:12,padding:"15px",fontFamily:F,fontWeight:900,fontSize:18,cursor:"pointer",transition:"background .2s"}}>
       {foundMine?"Join "+foundMine.name+" →":"Search →"}
     </button>
   </div>;
@@ -4926,23 +4940,28 @@ function JoinMineFlow({onComplete,onBack}){
       if(!role||(role==="operator"&&!machine))return;
       setJoining(true);setJoinErr("");
       try{
-        const {data:auth,error:authErr}=await supabase.auth.signUp({email,password:pass,options:{data:{name}}});
-        if(authErr)throw authErr;
-        if(!auth?.user)throw new Error("Sign-up returned no user");
-        const {error:siErr}=await supabase.auth.signInWithPassword({email,password:pass});
-        if(siErr)throw siErr;
+        let authUserId=session?.user?.id||null;
+        if(!authUserId){
+          const {data:auth,error:authErr}=await supabase.auth.signUp({email,password:pass,options:{data:{name},emailRedirectTo:window.location.origin}});
+          if(authErr)throw authErr;
+          if(!auth?.user)throw new Error("Sign-up returned no user");
+          const {error:siErr}=await supabase.auth.signInWithPassword({email,password:pass});
+          if(siErr)throw siErr;
+          authUserId=auth.user.id;
+        }
         const {error:opErr}=await supabase.from("operators").insert({
-          auth_id:auth.user.id,mine_id:foundMine.id,name,role,
+          auth_id:authUserId,mine_id:foundMine.id,name,role,
           machine_id:role==="operator"?machine:null,status:"active",
         });
         if(opErr)throw opErr;
+        try{localStorage.setItem("mineops:activeMineId",foundMine.id);}catch(e){}
         setStep(4);
       }catch(err){
         console.error("Join mine failed:",err);
-        setJoinErr(err.message||"Could not join. Try again.");
+        setJoinErr(friendlyAuthError(err));
       }finally{setJoining(false);}
     }} style={{width:"100%",background:joining?C.border:(role&&(role!=="operator"||machine)?C.success:C.border),color:joining?C.muted:(role&&(role!=="operator"||machine)?"#000":C.muted),border:"none",borderRadius:12,padding:"15px",fontFamily:F,fontWeight:900,fontSize:18,cursor:joining?"default":"pointer",transition:"background .2s"}}>
-      {joining?"Requesting…":"Request Access →"}
+      {joining?"Joining…":session?"Join Mine →":"Request Access →"}
     </button>
     <button onClick={()=>setStep(2)} style={{width:"100%",background:"none",border:"none",color:C.muted,padding:"10px",fontFamily:F,fontWeight:700,fontSize:13,cursor:"pointer"}}>← Back</button>
   </div>;
@@ -5022,40 +5041,249 @@ function PreshiftHistoryScreen({mineId,onBack}){
   </div>;
 }
 
-function Login({onLogin,mine,onBack}){
+// ── Auth helpers ──────────────────────────────────────────────────────────
+function friendlyAuthError(e){
+  const raw=(e?.message||String(e||"")).toLowerCase();
+  if(raw.includes("invalid login credentials"))return"That email and password don't match.";
+  if(raw.includes("user already registered")||raw.includes("already exists"))return"An account with that email already exists. Sign in instead?";
+  if(raw.includes("email not confirmed"))return"Check your inbox to confirm your email.";
+  if(raw.includes("rate limit"))return"Too many attempts. Try again in a few minutes.";
+  if(raw.includes("password should be")||raw.includes("password is too short"))return"Use at least 8 characters for your password.";
+  if(raw.includes("invalid email"))return"That doesn't look like a valid email.";
+  if(raw.includes("user not found"))return"No account with that email.";
+  if(raw.includes("network")||raw.includes("fetch"))return"Connection problem. Check your network and try again.";
+  // Fallback — strip codes, keep readable text.
+  return e?.message?e.message.replace(/^AuthApiError:\s*/,""):"Something went wrong. Try again.";
+}
+function passwordStrength(pw){
+  if(!pw)return{score:0,label:"",color:C.muted};
+  let s=0;
+  if(pw.length>=8)s++;
+  if(pw.length>=12)s++;
+  if(/[A-Z]/.test(pw)&&/[a-z]/.test(pw))s++;
+  if(/\d/.test(pw))s++;
+  if(/[^\w\s]/.test(pw))s++;
+  const tiers=[
+    {label:"Too short",color:C.danger},
+    {label:"Weak",     color:C.danger},
+    {label:"Fair",     color:C.amber},
+    {label:"Good",     color:C.info},
+    {label:"Strong",   color:C.success},
+    {label:"Excellent",color:C.success},
+  ];
+  return{score:s,...tiers[Math.min(s,tiers.length-1)]};
+}
+function isValidEmail(e){return/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test((e||"").trim());}
+
+// ── Auth Screen ───────────────────────────────────────────────────────────
+// Unified sign-in / sign-up / magic-link / forgot-password / reset-password.
+// Mode is internal state; URL-detected PASSWORD_RECOVERY events flip to
+// "reset" via the `forceMode` prop set by the parent.
+function AuthScreen({forceMode,onResetComplete}){
+  const[mode,setMode]=useState(forceMode||"signIn"); // signIn|signUp|magic|forgot|reset
+  useEffect(()=>{if(forceMode)setMode(forceMode);},[forceMode]);
   const[email,setEmail]=useState("");
+  const[name,setName]=useState("");
   const[pass,setPass]=useState("");
+  const[newPass,setNewPass]=useState("");
+  const[showPass,setShowPass]=useState(false);
   const[loading,setLoading]=useState(false);
   const[err,setErr]=useState("");
-  const emailOk=/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
-  const passOk=pass.length>=6;
-  const inp={background:C.surface,color:C.text,border:`1px solid ${C.border}`,borderRadius:9,padding:"12px 14px",fontSize:15,width:"100%",outline:"none",marginBottom:10};
-  const go=async()=>{
-    if(!emailOk||!passOk)return;
-    setLoading(true);setErr("");
+  const[info,setInfo]=useState("");
+  const emailRef=useRef(null);
+  useEffect(()=>{
+    // Auto-focus email on initial render (except in reset mode where there's no email field).
+    if(mode!=="reset")emailRef.current?.focus();
+    setErr("");setInfo("");
+  },[mode]);
+
+  const inp={background:C.surface,color:C.text,border:`1px solid ${C.border}`,borderRadius:10,padding:"13px 14px",fontSize:15,width:"100%",outline:"none",boxSizing:"border-box",fontFamily:"inherit"};
+  const switchMode=m=>{setMode(m);};
+
+  // Helpers
+  const emailOk=isValidEmail(email);
+  const passOk=pass.length>=8;
+  const strength=passwordStrength(pass);
+  const newPassStrength=passwordStrength(newPass);
+  const submitDisabled=loading||(
+    mode==="signIn"  ? !emailOk||pass.length<6 :
+    mode==="signUp"  ? !emailOk||!passOk||!name.trim() :
+    mode==="magic"   ? !emailOk :
+    mode==="forgot"  ? !emailOk :
+    mode==="reset"   ? newPass.length<8 :
+    true);
+
+  const submit=async()=>{
+    if(submitDisabled)return;
+    setLoading(true);setErr("");setInfo("");
     try{
-      const {data,error}=await supabase.auth.signInWithPassword({email,password:pass});
-      if(error)throw error;
-      onLogin(data.session);
+      if(mode==="signIn"){
+        const{error}=await supabase.auth.signInWithPassword({email:email.trim(),password:pass});
+        if(error)throw error;
+      }else if(mode==="signUp"){
+        const{error}=await supabase.auth.signUp({
+          email:email.trim(),password:pass,
+          options:{data:{name:name.trim()},emailRedirectTo:window.location.origin},
+        });
+        if(error)throw error;
+        // Some Supabase configs require email confirmation before a session is issued.
+        // If no session was returned, sign in directly so we don't strand the user.
+        const{data:s}=await supabase.auth.getSession();
+        if(!s?.session){
+          const{error:siErr}=await supabase.auth.signInWithPassword({email:email.trim(),password:pass});
+          if(siErr)throw siErr;
+        }
+      }else if(mode==="magic"){
+        const{error}=await supabase.auth.signInWithOtp({
+          email:email.trim(),
+          options:{emailRedirectTo:window.location.origin},
+        });
+        if(error)throw error;
+        setInfo("Check your inbox for a sign-in link.");
+      }else if(mode==="forgot"){
+        const{error}=await supabase.auth.resetPasswordForEmail(email.trim(),{
+          redirectTo:window.location.origin,
+        });
+        if(error)throw error;
+        setInfo("If an account exists for that email, we've sent reset instructions.");
+      }else if(mode==="reset"){
+        const{error}=await supabase.auth.updateUser({password:newPass});
+        if(error)throw error;
+        setInfo("Password updated.");
+        setTimeout(()=>{onResetComplete&&onResetComplete();},800);
+      }
     }catch(e){
-      console.error("signIn failed:",e);
-      setErr(e.message||"Sign-in failed.");
+      console.error("auth submit:",e);
+      setErr(friendlyAuthError(e));
     }finally{setLoading(false);}
   };
-  return <div style={{minHeight:"100vh",display:"flex",flexDirection:"column",justifyContent:"center",padding:"28px 20px"}} className="up">
-    <div style={{textAlign:"center",marginBottom:24}}>
-      <div style={{fontFamily:F,fontWeight:900,fontSize:44,color:C.accent,letterSpacing:".06em"}}>MINEOPS</div>
-      {mine?<div style={{fontFamily:F,fontWeight:700,fontSize:16,color:C.text,marginTop:4}}>{mine.name||mine.mineName}</div>:null}
+
+  // Headers per mode
+  const title={
+    signIn:"Welcome back",
+    signUp:"Create your account",
+    magic:"Sign in with a link",
+    forgot:"Reset your password",
+    reset:"Set a new password",
+  }[mode];
+  const subtitle={
+    signIn:"Sign in to your crew",
+    signUp:"Two steps to your first shift",
+    magic:"We'll email you a one-tap sign-in link",
+    forgot:"We'll email you a reset link",
+    reset:"Make it something only you'd guess",
+  }[mode];
+
+  return<div style={{minHeight:"100vh",display:"flex",flexDirection:"column",background:`radial-gradient(ellipse at top, ${C.accent}10, ${C.bg} 60%)`,padding:"32px 22px 24px"}}>
+    {/* Brand */}
+    <div style={{textAlign:"center",marginBottom:18}}>
+      <div style={{fontFamily:F,fontWeight:900,fontSize:38,color:C.accent,letterSpacing:".08em"}}>MINEOPS</div>
+      <div style={{fontSize:10,color:C.muted,letterSpacing:".16em",textTransform:"uppercase",marginTop:2}}>Production Intelligence</div>
     </div>
-    <div style={{fontSize:12,color:C.muted,marginBottom:5}}>Email</div>
-    <input type="email" autoCapitalize="none" value={email} onChange={e=>setEmail(e.target.value)} placeholder="you@company.com.au" style={{...inp,border:`1px solid ${emailOk?C.success:C.border}`}}/>
-    <div style={{fontSize:12,color:C.muted,marginBottom:5}}>Password</div>
-    <input type="password" value={pass} onChange={e=>setPass(e.target.value)} onKeyDown={e=>e.key==="Enter"&&go()} placeholder="••••••••" style={{...inp,border:`1px solid ${passOk?C.success:C.border}`}}/>
-    {err&&<div style={{background:`${C.danger}15`,border:`1px solid ${C.danger}44`,borderRadius:10,padding:"10px 12px",marginBottom:10,fontSize:12,color:C.danger}}>{err}</div>}
-    <button disabled={loading||!emailOk||!passOk} onClick={go} style={{width:"100%",background:loading?C.border:(emailOk&&passOk?C.accent:C.border),color:loading?C.muted:(emailOk&&passOk?"#000":C.muted),border:"none",borderRadius:12,padding:"15px",fontFamily:F,fontWeight:900,fontSize:18,cursor:loading?"default":"pointer",marginTop:6}}>
-      {loading?"Signing in…":"Sign In →"}
-    </button>
-    {onBack&&<button onClick={onBack} style={{width:"100%",background:"none",border:"none",color:C.muted,padding:"12px",fontFamily:F,fontWeight:700,fontSize:13,cursor:"pointer",marginTop:4}}>← Back</button>}
+
+    {/* Mode toggle (only on default modes) */}
+    {(mode==="signIn"||mode==="signUp")&&<div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:12,padding:4,display:"flex",marginBottom:18}}>
+      {[["signIn","Sign In"],["signUp","Sign Up"]].map(([m,lb])=>{
+        const active=mode===m;
+        return<button key={m} onClick={()=>switchMode(m)}
+          style={{flex:1,background:active?C.accent:"transparent",color:active?"#000":C.muted,border:"none",borderRadius:9,padding:"10px",fontFamily:F,fontWeight:900,fontSize:13,letterSpacing:".04em",cursor:"pointer",transition:"all .15s"}}>{lb}</button>;
+      })}
+    </div>}
+
+    {/* Title block */}
+    <div style={{marginBottom:16}}>
+      <div style={{fontFamily:F,fontWeight:900,fontSize:22,color:C.text}}>{title}</div>
+      <div style={{fontSize:13,color:C.muted,marginTop:4}}>{subtitle}</div>
+    </div>
+
+    {/* Form */}
+    <form onSubmit={e=>{e.preventDefault();submit();}} style={{flex:1}}>
+      {/* Name (sign up only) */}
+      {mode==="signUp"&&<>
+        <div style={{fontSize:11,color:C.muted,marginBottom:5,fontFamily:F,fontWeight:700,letterSpacing:".06em",textTransform:"uppercase"}}>Full name</div>
+        <input type="text" autoComplete="name" autoCapitalize="words" value={name} onChange={e=>setName(e.target.value)}
+          placeholder="Jane Smith" style={{...inp,marginBottom:12,border:`1px solid ${name.trim()?C.success:C.border}`}}/>
+      </>}
+
+      {/* Email (all but reset) */}
+      {mode!=="reset"&&<>
+        <div style={{fontSize:11,color:C.muted,marginBottom:5,fontFamily:F,fontWeight:700,letterSpacing:".06em",textTransform:"uppercase"}}>Email</div>
+        <input ref={emailRef} type="email" autoComplete="email" autoCapitalize="none" inputMode="email"
+          value={email} onChange={e=>setEmail(e.target.value)} placeholder="you@company.com"
+          style={{...inp,marginBottom:12,border:`1px solid ${emailOk?C.success:C.border}`}}/>
+      </>}
+
+      {/* Password (signIn + signUp) */}
+      {(mode==="signIn"||mode==="signUp")&&<>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline",marginBottom:5}}>
+          <div style={{fontSize:11,color:C.muted,fontFamily:F,fontWeight:700,letterSpacing:".06em",textTransform:"uppercase"}}>Password</div>
+          {mode==="signIn"&&<button type="button" onClick={()=>switchMode("forgot")}
+            style={{background:"none",border:"none",color:C.info,fontSize:11,fontFamily:F,fontWeight:700,cursor:"pointer",padding:0}}>Forgot?</button>}
+        </div>
+        <div style={{position:"relative"}}>
+          <input type={showPass?"text":"password"} autoComplete={mode==="signUp"?"new-password":"current-password"}
+            value={pass} onChange={e=>setPass(e.target.value)}
+            placeholder={mode==="signUp"?"At least 8 characters":"Your password"}
+            style={{...inp,marginBottom:mode==="signUp"?6:12,paddingRight:62,border:`1px solid ${(mode==="signUp"?passOk:pass.length>=6)?C.success:C.border}`}}/>
+          <button type="button" onClick={()=>setShowPass(s=>!s)}
+            style={{position:"absolute",right:8,top:13,background:"none",border:"none",color:C.muted,fontSize:11,fontFamily:F,fontWeight:700,cursor:"pointer",padding:"4px 8px"}}>{showPass?"Hide":"Show"}</button>
+        </div>
+        {mode==="signUp"&&pass&&<div style={{marginBottom:12}}>
+          <div style={{display:"flex",gap:3,marginBottom:4}}>
+            {[1,2,3,4,5].map(i=><div key={i} style={{flex:1,height:3,borderRadius:99,background:i<=strength.score?strength.color:C.border,transition:"background .15s"}}/>)}
+          </div>
+          <div style={{fontSize:10,color:strength.color,fontFamily:F,fontWeight:700,letterSpacing:".04em"}}>{strength.label}</div>
+        </div>}
+      </>}
+
+      {/* New password (reset) */}
+      {mode==="reset"&&<>
+        <div style={{fontSize:11,color:C.muted,marginBottom:5,fontFamily:F,fontWeight:700,letterSpacing:".06em",textTransform:"uppercase"}}>New password</div>
+        <div style={{position:"relative"}}>
+          <input type={showPass?"text":"password"} autoComplete="new-password" value={newPass} onChange={e=>setNewPass(e.target.value)}
+            placeholder="At least 8 characters"
+            style={{...inp,marginBottom:6,paddingRight:62,border:`1px solid ${newPass.length>=8?C.success:C.border}`}}/>
+          <button type="button" onClick={()=>setShowPass(s=>!s)}
+            style={{position:"absolute",right:8,top:13,background:"none",border:"none",color:C.muted,fontSize:11,fontFamily:F,fontWeight:700,cursor:"pointer",padding:"4px 8px"}}>{showPass?"Hide":"Show"}</button>
+        </div>
+        {newPass&&<div style={{marginBottom:12}}>
+          <div style={{display:"flex",gap:3,marginBottom:4}}>
+            {[1,2,3,4,5].map(i=><div key={i} style={{flex:1,height:3,borderRadius:99,background:i<=newPassStrength.score?newPassStrength.color:C.border}}/>)}
+          </div>
+          <div style={{fontSize:10,color:newPassStrength.color,fontFamily:F,fontWeight:700,letterSpacing:".04em"}}>{newPassStrength.label}</div>
+        </div>}
+      </>}
+
+      {err&&<div style={{background:`${C.danger}15`,border:`1px solid ${C.danger}44`,borderRadius:10,padding:"10px 12px",marginBottom:10,fontSize:12,color:C.danger,lineHeight:1.5}}>{err}</div>}
+      {info&&<div style={{background:`${C.success}10`,border:`1px solid ${C.success}33`,borderRadius:10,padding:"10px 12px",marginBottom:10,fontSize:12,color:C.success,lineHeight:1.5}}>{info}</div>}
+
+      <button type="submit" disabled={submitDisabled}
+        style={{width:"100%",background:submitDisabled?C.border:`linear-gradient(135deg,${C.accent},#d4881e)`,color:submitDisabled?C.muted:"#000",border:"none",borderRadius:12,padding:"15px",fontFamily:F,fontWeight:900,fontSize:17,letterSpacing:".04em",cursor:submitDisabled?"default":"pointer",transition:"all .15s",marginTop:4}}>
+        {loading?<span style={{display:"inline-flex",alignItems:"center",gap:8}}><span className="auth-spinner"/>{ {signIn:"Signing in…",signUp:"Creating account…",magic:"Sending…",forgot:"Sending…",reset:"Updating…"}[mode] }</span>:{
+          signIn:"Sign In →", signUp:"Create Account →",
+          magic:"Send Magic Link", forgot:"Send Reset Link",
+          reset:"Update Password",
+        }[mode]}
+      </button>
+
+      {/* Mode switches */}
+      {(mode==="signIn"||mode==="signUp")&&<div style={{textAlign:"center",marginTop:18}}>
+        <button type="button" onClick={()=>switchMode("magic")}
+          style={{background:"none",border:`1px solid ${C.border}`,borderRadius:10,padding:"10px 16px",color:C.textSub,fontFamily:F,fontWeight:700,fontSize:13,cursor:"pointer"}}>✉ Sign in with a magic link instead</button>
+      </div>}
+      {(mode==="magic"||mode==="forgot")&&<div style={{textAlign:"center",marginTop:18}}>
+        <button type="button" onClick={()=>switchMode("signIn")}
+          style={{background:"none",border:"none",color:C.muted,fontSize:13,fontFamily:F,fontWeight:700,cursor:"pointer"}}>← Back to sign in</button>
+      </div>}
+    </form>
+
+    {/* Footer */}
+    <div style={{textAlign:"center",fontSize:10,color:C.muted,lineHeight:1.6,marginTop:24}}>
+      By continuing you agree to MineOps' terms.<br/>MSHA 30 CFR Part 56 · Secure multi-tenant.
+    </div>
+
+    <style>{`@keyframes authSpin{to{transform:rotate(360deg)}}
+.auth-spinner{display:inline-block;width:14px;height:14px;border:2px solid currentColor;border-right-color:transparent;border-radius:50%;animation:authSpin .6s linear infinite}`}</style>
   </div>;
 }
 function TruckQuestion({user,onAnswer}){
@@ -5081,10 +5309,10 @@ function SignOutConfirm({onConfirm,onCancel}){
 // ── App Root ───────────────────────────────────────────────────────────────
 
 function MineOpsApp() {
-  const { session } = useSupabase()
+  const { session, authEvent, clearAuthEvent } = useSupabase()
   const [user,setUser]=useState(null)
   const [tab,setTab]=useState("board")
-  const [flow,setFlow]=useState("onboarding")
+  const [flow,setFlow]=useState("auth")
   const [pendingMine,setPendingMine]=useState(null)
   const [activeMine,setActiveMine]=useState(null)
   const [showSignOut,setShowSignOut]=useState(false)
@@ -5093,53 +5321,63 @@ function MineOpsApp() {
   const [activeShiftId,setActiveShiftId]=useState(null)
   const [customCatData,setCustomCatData]=useState([])
   const [custPerfData,setCustPerfData]=useState({})
-  // Load the user's operator profile + mine whenever session changes
+  // Load the user's operator profile + mine whenever session changes.
+  // A single auth.uid() can belong to multiple mines (contractor, multi-site).
+  // We load all rows, then pick the active mine from localStorage > first.
   useEffect(()=>{
     let cancelled=false;
     async function loadProfile(){
-      if(!session){setUser(null);return;}
+      if(session===undefined)return; // initial getSession() still pending
+      if(!session){setUser(null);setActiveMine(null);return;}
+      // Password-recovery URL: don't advance routing; AuthScreen reset mode handles it.
+      if(authEvent==="PASSWORD_RECOVERY")return;
       try{
-        // Two separate queries — avoids the embedded join 500 error
-        const {data:op,error:opErr}=await supabase
+        const {data:ops,error:opErr}=await supabase
           .from("operators")
           .select("id,name,role,status,machine_id,crusher_assigned,employee_id,auth_id,mine_id")
-          .eq("auth_id",session.user.id)
-          .maybeSingle();
+          .eq("auth_id",session.user.id);
         if(opErr)throw opErr;
         if(cancelled)return;
-        if(!op){
-          // Signed in but no operator row yet — stay on onboarding so they can create/join a mine
+        if(!ops||ops.length===0){
+          // Signed in but no mine memberships → onboarding welcome
+          setUser(null);
+          setFlow(f=>(["auth","onboarding"].includes(f)?"onboarding":f));
           return;
         }
+        // Pick active mine: localStorage preference > first.
+        const preferred=typeof localStorage!=="undefined"?localStorage.getItem("mineops:activeMineId"):null;
+        const chosen=ops.find(o=>o.mine_id===preferred)||ops[0];
         let mineRow=null;
-        if(op.mine_id){
+        if(chosen.mine_id){
           const {data:m,error:mErr}=await supabase
             .from("mines")
-            .select("id,name,code,location,plan")
-            .eq("id",op.mine_id)
+            .select("id,name,code,location,plan,owner_id")
+            .eq("id",chosen.mine_id)
             .maybeSingle();
           if(!mErr)mineRow=m;
         }
-        // Shape the user to mimic the BASE_USERS format the rest of the app expects
         const u={
-          id:op.id,
-          name:op.name,
-          role:op.role,
-          machine:op.machine_id||undefined,
-          crusherAssigned:op.crusher_assigned||undefined,
-          employeeId:op.employee_id||op.id.slice(0,8).toUpperCase(),
-          avatar:(op.name||"?").split(" ").map(p=>p[0]).join("").slice(0,2).toUpperCase(),
-          status:op.status,
+          id:chosen.id,
+          name:chosen.name,
+          role:chosen.role,
+          machine:chosen.machine_id||undefined,
+          crusherAssigned:chosen.crusher_assigned||undefined,
+          employeeId:chosen.employee_id||chosen.id.slice(0,8).toUpperCase(),
+          avatar:(chosen.name||"?").split(" ").map(p=>p[0]).join("").slice(0,2).toUpperCase(),
+          status:chosen.status,
+          email:session.user.email,
         };
         setUser(u);
-        if(mineRow){setActiveMine(mineRow);}
-        // If still on onboarding/login screens, advance into the app
-        setFlow(f=>((f==="onboarding"||f==="login")?"truckQ":f));
+        if(mineRow){
+          setActiveMine(mineRow);
+          try{localStorage.setItem("mineops:activeMineId",mineRow.id);}catch(e){}
+        }
+        setFlow(f=>(["auth","onboarding","login"].includes(f)?"truckQ":f));
       }catch(e){console.error("loadProfile failed:",e);}
     }
     loadProfile();
     return()=>{cancelled=true;};
-  },[session])
+  },[session,authEvent])
   // When we have a real mine, load its machines + operators from Supabase.
   // Otherwise (demo mode) fall back to BASE_MACHINES + hardcoded USERS.
   const[remoteMachines,setRemoteMachines]=useState(null)
@@ -5176,7 +5414,6 @@ function MineOpsApp() {
     if(!valid.includes(tab))setTab(lv===1?"today":"board");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   },[user?.role])
-  const handleLogin=()=>{ /* session is already set by AuthProvider; loadProfile effect handles the rest */ }
   const ensureShift=async(truckDriven)=>{
     if(!user?.id||!activeMine?.id||activeShiftId)return activeShiftId;
     const hr=new Date().getHours();
@@ -5212,7 +5449,7 @@ function MineOpsApp() {
       }catch(e){console.error("persist machine failed:",e);}
     }
   }
-  const handleSignOut=async()=>{await supabase.auth.signOut();setUser(null);setActiveMine(null);setRemoteMachines(null);setRemoteOperators(null);setActiveShiftId(null);setFlow("onboarding");setTab("today");setShowSignOut(false);setMenuOpen(false);}
+  const handleSignOut=async()=>{await supabase.auth.signOut();try{localStorage.removeItem("mineops:activeMineId");}catch(e){}setUser(null);setActiveMine(null);setRemoteMachines(null);setRemoteOperators(null);setActiveShiftId(null);setFlow("auth");setTab("today");setShowSignOut(false);setMenuOpen(false);}
   const homeTab=lv===1?"today":"board";
   const screen=()=>{
     if(flow==="vehicleCheck")return <TruckCheckScreen onComplete={()=>setFlow("app")}/>
@@ -5230,7 +5467,7 @@ function MineOpsApp() {
   return <div style={{maxWidth:420,margin:"0 auto",height:"100vh",display:"flex",flexDirection:"column",background:C.bg,position:"relative",overflow:"hidden"}}>
     {showSignOut&&<SignOutConfirm onConfirm={handleSignOut} onCancel={()=>setShowSignOut(false)}/>}
     {menuOpen&&<MenuOverlay user={user} allMachines={allMachines} activeMine={activeMine} onNav={t=>{if(["setup","tickets","reportIssue","ticketDetail","workplaceExam","workplaceAreas","fireInspect","extinguisherLocations"].includes(t)){setFlow(t);}else{setTab(t);setFlow("app");}}} onVehicleCheck={()=>setFlow("vehicleCheck")} onClose={()=>setMenuOpen(false)}/>}
-    {user&&!["onboarding","createMine","joinMine","subscription","vlSetup","login","app","vehicleCheck","addMachine","setup","plants","inspHistory","extinguisherLocations","workplaceAreas","checkItemConfig"].includes(flow)&&
+    {user&&!["auth","onboarding","createMine","joinMine","subscription","vlSetup","login","app","vehicleCheck","addMachine","setup","plants","inspHistory","extinguisherLocations","workplaceAreas","checkItemConfig"].includes(flow)&&
       <div style={{flexShrink:0,background:`${C.surface}f2`,backdropFilter:"blur(10px)",borderBottom:`1px solid ${C.border}`,padding:"9px 15px",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
         <div style={{display:"flex",alignItems:"center",gap:10}}>
           <button onClick={()=>setMenuOpen(true)} style={{background:"none",border:`1px solid ${C.border}`,borderRadius:8,padding:"5px 10px",color:C.muted,fontSize:16,cursor:"pointer",lineHeight:1}}>☰</button>
@@ -5238,12 +5475,12 @@ function MineOpsApp() {
         </div>
         <button onClick={()=>setShowSignOut(true)} style={{background:"none",border:"none",color:C.muted,fontSize:12,fontFamily:F,fontWeight:700,cursor:"pointer"}}>Sign out</button>
       </div>}
-    {flow==="onboarding"&&<div style={{flex:1,overflowY:"auto"}}><OnboardingScreen onEnterDemo={()=>setFlow("login")} onCreateMine={()=>setFlow("createMine")} onJoinMine={()=>setFlow("joinMine")} onSignIn={()=>setFlow("login")}/></div>}
+    {(flow==="auth"||authEvent==="PASSWORD_RECOVERY")&&<div style={{flex:1,overflowY:"auto"}}><AuthScreen forceMode={authEvent==="PASSWORD_RECOVERY"?"reset":undefined} onResetComplete={()=>{clearAuthEvent&&clearAuthEvent();setFlow("auth");}}/></div>}
+    {flow==="onboarding"&&authEvent!=="PASSWORD_RECOVERY"&&<div style={{flex:1,overflowY:"auto"}}><OnboardingScreen onEnterDemo={()=>setFlow("auth")} onCreateMine={()=>setFlow("createMine")} onJoinMine={()=>setFlow("joinMine")} onSignIn={()=>setFlow("auth")}/></div>}
     {flow==="createMine"&&<div style={{flex:1,overflowY:"auto"}}><CreateMineFlow onComplete={m=>{setActiveMine(m);setPendingMine(m);setFlow("subscription")}} onBack={()=>setFlow("onboarding")}/></div>}
     {flow==="joinMine"&&<div style={{flex:1,overflowY:"auto"}}><JoinMineFlow onComplete={m=>{setActiveMine(m.mine);setFlow("login")}} onBack={()=>setFlow("onboarding")}/></div>}
     {flow==="subscription"&&<div style={{flex:1,overflowY:"auto"}}><SubscriptionScreen mineName={pendingMine?.mineName||"Your Mine"} onSelect={()=>setFlow("vlSetup")}/></div>}
     {flow==="vlSetup"&&<div style={{flex:1,overflowY:"auto"}}><VisionLinkSetup activeMine={activeMine} onComplete={()=>setFlow("login")} onSkip={()=>setFlow("login")}/></div>}
-    {flow==="login"&&<div style={{flex:1,overflowY:"auto"}}><Login onLogin={handleLogin} mine={activeMine}/></div>}
     {flow==="truckQ"&&<div style={{flex:1,overflowY:"auto"}}><TruckQuestion user={user} onAnswer={handleTruck}/></div>}
     {flow==="truckCheck"&&<div style={{flex:1,overflowY:"auto"}}><TruckCheckScreen onComplete={()=>setFlow(lv===1?"machines":"app")}/></div>}
     {flow==="machines"&&<div style={{flex:1,overflowY:"auto"}}><MachineSelectScreen allMachines={allMachines} catDemo={catDemo} isAdmin={user?.role==="admin"} activeMine={activeMine} activeShiftId={activeShiftId} user={user} onAddMachine={()=>setFlow("addMachine")} onComplete={()=>setFlow("app")}/></div>}
