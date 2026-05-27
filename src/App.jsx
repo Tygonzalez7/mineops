@@ -2243,6 +2243,10 @@ function MenuOverlay({user,onNav,onVehicleCheck,onClose,allMachines}){
           {lv>=2&&<Item icon="📋" label="Compliance" sub="Training · competent persons · SDS" color={C.info} onClick={()=>{onNav("comply");onClose();}}/>}
         </Section>
 
+        <Section title="Mine">
+          <Item icon="🔀" label="Switch Mine" sub={activeMine?.name?`Currently: ${activeMine.name}`:"Pick a different mine or add a new one"} color={C.info} onClick={()=>{onNav("minePicker");onClose();}}/>
+        </Section>
+
         {isAdmin&&<Section title="Admin">
           <Item icon="⚙" label="Setup" sub="Plants · areas · locations · fleet · integrations" onClick={()=>{onNav("setup");onClose();}}/>
         </Section>}
@@ -4719,12 +4723,13 @@ const DEMO_MINES=[
 // ── Onboarding (Welcome) ──────────────────────────────────────────────────
 // Shown after sign-up / sign-in when the user has no mine memberships yet.
 // Two big paths: create a new mine or join one via 6-char code.
-function OnboardingScreen({onCreateMine,onJoinMine,onSignOut}){
+function OnboardingScreen({onCreateMine,onJoinMine,onSignOut,onCancel}){
+  const addMode=!!onCancel;
   return<div style={{minHeight:"100vh",display:"flex",flexDirection:"column",justifyContent:"space-between",background:`radial-gradient(ellipse at top, ${C.accent}12, ${C.bg} 60%)`,padding:"44px 22px 28px"}}>
     <div style={{textAlign:"center"}}>
       <div style={{fontSize:60,marginBottom:14}}>⛏</div>
-      <div style={{fontFamily:F,fontWeight:900,fontSize:32,color:C.text,marginBottom:8,letterSpacing:".02em"}}>You're in</div>
-      <div style={{fontSize:14,color:C.muted,lineHeight:1.55,maxWidth:300,margin:"0 auto"}}>One last step — set up your crew. You can join more mines later.</div>
+      <div style={{fontFamily:F,fontWeight:900,fontSize:32,color:C.text,marginBottom:8,letterSpacing:".02em"}}>{addMode?"Add a mine":"You're in"}</div>
+      <div style={{fontSize:14,color:C.muted,lineHeight:1.55,maxWidth:300,margin:"0 auto"}}>{addMode?"Start a new one as admin, or join one with a code.":"One last step — set up your crew. You can join more mines later."}</div>
     </div>
 
     <div>
@@ -4748,13 +4753,121 @@ function OnboardingScreen({onCreateMine,onJoinMine,onSignOut}){
     </div>
 
     <div style={{textAlign:"center",fontSize:13,color:C.muted}}>
-      Wrong account?{" "}<button onClick={onSignOut} style={{background:"none",border:"none",color:C.accent,fontFamily:F,fontWeight:700,fontSize:13,cursor:"pointer",textDecoration:"underline",padding:0}}>Sign out</button>
+      {addMode
+        ?<button onClick={onCancel} style={{background:"none",border:"none",color:C.muted,fontFamily:F,fontWeight:700,fontSize:13,cursor:"pointer",padding:0}}>← Cancel</button>
+        :<>Wrong account?{" "}<button onClick={onSignOut} style={{background:"none",border:"none",color:C.accent,fontFamily:F,fontWeight:700,fontSize:13,cursor:"pointer",textDecoration:"underline",padding:0}}>Sign out</button></>}
     </div>
   </div>;
 }
 
 // ── Share Code Screen ─────────────────────────────────────────────────────
 // Big mono share code · tap-to-copy · native share sheet · instructions.
+// ── Mine Picker ───────────────────────────────────────────────────────────
+// Shown when:
+//   (1) sign-in lands a user with multiple mine memberships and no
+//       localStorage preference yet, or
+//   (2) the user taps "Switch Mine" from the menu.
+// Lists each membership with role + last-active timestamp. "+ Add another"
+// routes to OnboardingScreen for Create/Join.
+function MinePickerScreen({onPick,onAddMine,onCancel,onSignOut}){
+  const{session}=useSupabase();
+  const[items,setItems]=useState([]); // {operator, mine}
+  const[loading,setLoading]=useState(true);
+  const[err,setErr]=useState("");
+
+  useEffect(()=>{
+    if(!session?.user?.id){setLoading(false);return;}
+    let cancelled=false;
+    (async()=>{
+      try{
+        const{data:ops,error:opErr}=await supabase.from("operators")
+          .select("id,name,role,status,mine_id,last_active_at,created_at")
+          .eq("auth_id",session.user.id);
+        if(opErr)throw opErr;
+        if(!ops||ops.length===0){setItems([]);setLoading(false);return;}
+        const mineIds=[...new Set(ops.map(o=>o.mine_id).filter(Boolean))];
+        const{data:mines,error:mErr}=await supabase.from("mines")
+          .select("id,name,location,code")
+          .in("id",mineIds);
+        if(mErr)throw mErr;
+        if(cancelled)return;
+        const mineMap=new Map((mines||[]).map(m=>[m.id,m]));
+        const enriched=ops.map(op=>({operator:op,mine:mineMap.get(op.mine_id)}))
+          .filter(x=>x.mine)
+          .sort((a,b)=>{
+            const ta=a.operator.last_active_at?new Date(a.operator.last_active_at).getTime():0;
+            const tb=b.operator.last_active_at?new Date(b.operator.last_active_at).getTime():0;
+            return tb-ta||a.mine.name.localeCompare(b.mine.name);
+          });
+        setItems(enriched);
+      }catch(e){console.error("mine picker:",e);setErr("Couldn't load your mines. Try again.");}
+      finally{if(!cancelled)setLoading(false);}
+    })();
+    return()=>{cancelled=true;};
+  },[session?.user?.id]);
+
+  const fmtLast=ts=>{
+    if(!ts)return"Never visited";
+    const d=new Date(ts);
+    const now=Date.now();
+    const ago=now-d.getTime();
+    if(ago<60_000)return"Just now";
+    if(ago<3_600_000)return`${Math.floor(ago/60_000)}m ago`;
+    if(ago<86_400_000)return`${Math.floor(ago/3_600_000)}h ago`;
+    if(ago<7*86_400_000)return`${Math.floor(ago/86_400_000)}d ago`;
+    return d.toLocaleDateString();
+  };
+
+  return<div style={{minHeight:"100vh",display:"flex",flexDirection:"column",background:`radial-gradient(ellipse at top, ${C.accent}10, ${C.bg} 60%)`,padding:"36px 22px 28px"}}>
+    {/* Header */}
+    <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:24}}>
+      <div>
+        <div style={{fontFamily:F,fontWeight:900,fontSize:24,color:C.text,letterSpacing:".02em"}}>Choose a mine</div>
+        <div style={{fontSize:13,color:C.muted,marginTop:4}}>{items.length>0?`${items.length} membership${items.length!==1?"s":""}`:"Pick where you're working today"}</div>
+      </div>
+      {onCancel&&<button onClick={onCancel}
+        style={{background:"none",border:`1px solid ${C.border}`,borderRadius:8,padding:"6px 11px",color:C.muted,fontSize:12,fontFamily:F,fontWeight:700,cursor:"pointer"}}>Cancel</button>}
+    </div>
+
+    <div style={{flex:1}}>
+      {loading?<div style={{textAlign:"center",padding:40,color:C.muted,fontSize:13}}>Loading…</div>:
+       err?<div style={{background:`${C.danger}15`,border:`1px solid ${C.danger}44`,borderRadius:10,padding:"10px 12px",fontSize:12,color:C.danger}}>{err}</div>:
+       items.length===0?<div style={{textAlign:"center",padding:"40px 22px"}}>
+         <div style={{fontSize:46,marginBottom:10,opacity:.6}}>⛏</div>
+         <div style={{fontFamily:F,fontWeight:900,fontSize:18,color:C.text,marginBottom:6}}>You're not in any mine yet</div>
+         <div style={{fontSize:12,color:C.muted,lineHeight:1.6,maxWidth:280,margin:"0 auto"}}>Create your own, or join one with a 6-character code.</div>
+       </div>:
+       items.map(({operator,mine})=>{
+         const role=ROLES[operator.role]||{label:operator.role,color:C.muted,icon:"·"};
+         const initials=(mine.name||"?").split(/\s+/).map(w=>w[0]).join("").slice(0,2).toUpperCase();
+         return<button key={operator.id} onClick={()=>onPick(mine.id)}
+           style={{width:"100%",background:C.card,border:`1px solid ${C.border}`,borderRadius:14,padding:"14px 16px",marginBottom:10,cursor:"pointer",display:"flex",alignItems:"center",gap:14,textAlign:"left",transition:"all .15s"}}>
+           <div style={{width:44,height:44,borderRadius:12,background:`${role.color}22`,border:`2px solid ${role.color}55`,display:"flex",alignItems:"center",justifyContent:"center",fontFamily:F,fontWeight:900,fontSize:15,color:role.color,flexShrink:0}}>{initials}</div>
+           <div style={{flex:1,minWidth:0}}>
+             <div style={{fontFamily:F,fontWeight:900,fontSize:16,color:C.text,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{mine.name}</div>
+             <div style={{display:"flex",alignItems:"center",gap:8,marginTop:3}}>
+               <span style={{background:`${role.color}20`,color:role.color,border:`1px solid ${role.color}44`,borderRadius:6,padding:"1px 7px",fontSize:9,fontFamily:F,fontWeight:700,letterSpacing:".04em"}}>{role.icon} {role.label.toUpperCase()}</span>
+               <span style={{fontSize:11,color:C.muted}}>{fmtLast(operator.last_active_at||operator.created_at)}</span>
+             </div>
+             {mine.location&&<div style={{fontSize:11,color:C.muted,marginTop:3,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{mine.location}</div>}
+           </div>
+           <span style={{color:C.muted,fontSize:18,flexShrink:0}}>›</span>
+         </button>;
+       })
+      }
+    </div>
+
+    <button onClick={onAddMine}
+      style={{width:"100%",background:`${C.accent}15`,border:`2px dashed ${C.accent}55`,color:C.accent,borderRadius:14,padding:"15px",fontFamily:F,fontWeight:900,fontSize:15,cursor:"pointer",marginTop:14,letterSpacing:".02em"}}>
+      + Add another mine
+    </button>
+
+    {onSignOut&&<div style={{textAlign:"center",fontSize:12,color:C.muted,marginTop:18}}>
+      Wrong account?{" "}<button onClick={onSignOut} style={{background:"none",border:"none",color:C.accent,fontFamily:F,fontWeight:700,fontSize:12,cursor:"pointer",textDecoration:"underline",padding:0}}>Sign out</button>
+    </div>}
+  </div>;
+}
+
 function ShareCodeScreen({mine,onContinue,onBack,heroTitle="🎉",heroLine="Mine created"}){
   const[copied,setCopied]=useState(false);
   const[shared,setShared]=useState(false);
@@ -5279,7 +5392,6 @@ function MineOpsApp() {
   const [user,setUser]=useState(null)
   const [tab,setTab]=useState("board")
   const [flow,setFlow]=useState("auth")
-  const [pendingMine,setPendingMine]=useState(null)
   const [activeMine,setActiveMine]=useState(null)
   const [showSignOut,setShowSignOut]=useState(false)
   const [menuOpen,setMenuOpen]=useState(false)
@@ -5311,9 +5423,18 @@ function MineOpsApp() {
           setFlow(f=>(["auth","onboarding"].includes(f)?"onboarding":f));
           return;
         }
-        // Pick active mine: localStorage preference > first.
+        // Pick active mine: localStorage preference > picker (if many) > sole row.
         const preferred=typeof localStorage!=="undefined"?localStorage.getItem("mineops:activeMineId"):null;
-        const chosen=ops.find(o=>o.mine_id===preferred)||ops[0];
+        let chosen=ops.find(o=>o.mine_id===preferred);
+        if(!chosen){
+          if(ops.length>1){
+            // Multiple memberships and no remembered choice — let the user pick.
+            setUser(null);setActiveMine(null);
+            setFlow(f=>(["auth","onboarding","login"].includes(f)?"minePicker":f));
+            return;
+          }
+          chosen=ops[0];
+        }
         let mineRow=null;
         if(chosen.mine_id){
           const {data:m,error:mErr}=await supabase
@@ -5338,8 +5459,10 @@ function MineOpsApp() {
         if(mineRow){
           setActiveMine(mineRow);
           try{localStorage.setItem("mineops:activeMineId",mineRow.id);}catch(e){}
+          // Fire-and-forget last_active_at bump (column added in migration 20260526010000).
+          try{await supabase.from("operators").update({last_active_at:new Date().toISOString()}).eq("id",chosen.id);}catch(e){/* column may not exist yet */}
         }
-        setFlow(f=>(["auth","onboarding","login"].includes(f)?"truckQ":f));
+        setFlow(f=>(["auth","onboarding","login","minePicker"].includes(f)?"truckQ":f));
       }catch(e){console.error("loadProfile failed:",e);}
     }
     loadProfile();
@@ -5433,8 +5556,8 @@ function MineOpsApp() {
   }
   return <div style={{maxWidth:420,margin:"0 auto",height:"100vh",display:"flex",flexDirection:"column",background:C.bg,position:"relative",overflow:"hidden"}}>
     {showSignOut&&<SignOutConfirm onConfirm={handleSignOut} onCancel={()=>setShowSignOut(false)}/>}
-    {menuOpen&&<MenuOverlay user={user} allMachines={allMachines} activeMine={activeMine} onNav={t=>{if(["setup","tickets","reportIssue","ticketDetail","workplaceExam","workplaceAreas","fireInspect","extinguisherLocations"].includes(t)){setFlow(t);}else{setTab(t);setFlow("app");}}} onVehicleCheck={()=>setFlow("vehicleCheck")} onClose={()=>setMenuOpen(false)}/>}
-    {user&&!["auth","onboarding","createMine","joinMine","subscription","vlSetup","login","app","vehicleCheck","addMachine","setup","plants","inspHistory","extinguisherLocations","workplaceAreas","checkItemConfig"].includes(flow)&&
+    {menuOpen&&<MenuOverlay user={user} allMachines={allMachines} activeMine={activeMine} onNav={t=>{if(["setup","tickets","reportIssue","ticketDetail","workplaceExam","workplaceAreas","fireInspect","extinguisherLocations","minePicker"].includes(t)){setFlow(t);}else{setTab(t);setFlow("app");}}} onVehicleCheck={()=>setFlow("vehicleCheck")} onClose={()=>setMenuOpen(false)}/>}
+    {user&&!["auth","onboarding","createMine","joinMine","minePicker","subscription","vlSetup","login","app","vehicleCheck","addMachine","setup","plants","inspHistory","extinguisherLocations","workplaceAreas","checkItemConfig"].includes(flow)&&
       <div style={{flexShrink:0,background:`${C.surface}f2`,backdropFilter:"blur(10px)",borderBottom:`1px solid ${C.border}`,padding:"9px 15px",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
         <div style={{display:"flex",alignItems:"center",gap:10}}>
           <button onClick={()=>setMenuOpen(true)} style={{background:"none",border:`1px solid ${C.border}`,borderRadius:8,padding:"5px 10px",color:C.muted,fontSize:16,cursor:"pointer",lineHeight:1}}>☰</button>
@@ -5443,9 +5566,10 @@ function MineOpsApp() {
         <button onClick={()=>setShowSignOut(true)} style={{background:"none",border:"none",color:C.muted,fontSize:12,fontFamily:F,fontWeight:700,cursor:"pointer"}}>Sign out</button>
       </div>}
     {(flow==="auth"||authEvent==="PASSWORD_RECOVERY")&&<div style={{flex:1,overflowY:"auto"}}><AuthScreen forceMode={authEvent==="PASSWORD_RECOVERY"?"reset":undefined} onResetComplete={()=>{clearAuthEvent&&clearAuthEvent();setFlow("auth");}}/></div>}
-    {flow==="onboarding"&&authEvent!=="PASSWORD_RECOVERY"&&<div style={{flex:1,overflowY:"auto"}}><OnboardingScreen onCreateMine={()=>setFlow("createMine")} onJoinMine={()=>setFlow("joinMine")} onSignOut={handleSignOut}/></div>}
-    {flow==="createMine"&&<div style={{flex:1,overflowY:"auto"}}><CreateMineFlow onComplete={()=>{setProfileBump(n=>n+1);setFlow("truckQ");}} onBack={()=>setFlow("onboarding")}/></div>}
-    {flow==="joinMine"&&<div style={{flex:1,overflowY:"auto"}}><JoinMineFlow onComplete={()=>{setProfileBump(n=>n+1);setFlow("truckQ");}} onBack={()=>setFlow("onboarding")}/></div>}
+    {flow==="onboarding"&&authEvent!=="PASSWORD_RECOVERY"&&<div style={{flex:1,overflowY:"auto"}}><OnboardingScreen onCreateMine={()=>setFlow("createMine")} onJoinMine={()=>setFlow("joinMine")} onSignOut={handleSignOut} onCancel={activeMine?()=>setFlow("app"):undefined}/></div>}
+    {flow==="minePicker"&&<div style={{flex:1,overflowY:"auto"}}><MinePickerScreen onPick={mineId=>{try{localStorage.setItem("mineops:activeMineId",mineId);}catch(e){}setProfileBump(n=>n+1);setFlow("truckQ");}} onAddMine={()=>setFlow("onboarding")} onCancel={activeMine?()=>setFlow("app"):undefined} onSignOut={activeMine?undefined:handleSignOut}/></div>}
+    {flow==="createMine"&&<div style={{flex:1,overflowY:"auto"}}><CreateMineFlow onComplete={()=>{setProfileBump(n=>n+1);setFlow("truckQ");}} onBack={()=>setFlow(activeMine?"app":"onboarding")}/></div>}
+    {flow==="joinMine"&&<div style={{flex:1,overflowY:"auto"}}><JoinMineFlow onComplete={()=>{setProfileBump(n=>n+1);setFlow("truckQ");}} onBack={()=>setFlow(activeMine?"app":"onboarding")}/></div>}
     {flow==="truckQ"&&<div style={{flex:1,overflowY:"auto"}}><TruckQuestion user={user} onAnswer={handleTruck}/></div>}
     {flow==="truckCheck"&&<div style={{flex:1,overflowY:"auto"}}><TruckCheckScreen onComplete={()=>setFlow(lv===1?"machines":"app")}/></div>}
     {flow==="machines"&&<div style={{flex:1,overflowY:"auto"}}><MachineSelectScreen allMachines={allMachines} catDemo={catDemo} isAdmin={user?.role==="admin"} activeMine={activeMine} activeShiftId={activeShiftId} user={user} onAddMachine={()=>setFlow("addMachine")} onComplete={()=>setFlow("app")}/></div>}
