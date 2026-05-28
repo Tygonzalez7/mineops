@@ -3798,13 +3798,13 @@ async function uploadExtinguisherPhoto(file,mineId,scopeId){
 // range, operator search. Tap a row to expand its full detail in-place.
 
 const RECORD_TYPES=[
-  {id:"all",         label:"All",         icon:"📋",color:C.muted},
-  {id:"prestart",    label:"Pre-Start",   icon:"✅",color:C.success},
-  {id:"workplace",   label:"Workplace",   icon:"🗺",color:C.info},
-  {id:"maintenance", label:"Maintenance", icon:"🔧",color:C.accent},
-  {id:"downtime",    label:"Downtime",    icon:"⏸️",color:C.amber},
-  {id:"handover",    label:"Handover",    icon:"🎟",color:C.danger},
-  {id:"fire",        label:"Fire Ext",    icon:"🧯",color:"#ec4899"},
+  {id:"prestart",    label:"Pre-Start Inspections",        shortLabel:"Pre-Start",       icon:"✅",color:C.success},
+  {id:"workplace",   label:"Workplace Exams",              shortLabel:"Workplace",       icon:"🗺",color:C.info},
+  {id:"vehicle",     label:"Vehicle / Truck Checks",       shortLabel:"Vehicle",         icon:"🚗",color:C.purple},
+  {id:"fire",        label:"Fire Extinguisher Inspections",shortLabel:"Fire Ext",        icon:"🧯",color:"#ec4899"},
+  {id:"maintenance", label:"Maintenance",                  shortLabel:"Maintenance",     icon:"🔧",color:C.accent},
+  {id:"downtime",    label:"Downtime",                     shortLabel:"Downtime",        icon:"⏸️",color:C.amber},
+  {id:"handover",    label:"Handover Tickets",             shortLabel:"Handover",        icon:"🎟",color:C.danger},
 ];
 
 function _humanDate(ymd){
@@ -3819,32 +3819,41 @@ function _fmtTime(iso){
   const d=new Date(iso);
   return`${String(d.getHours()).padStart(2,"0")}:${String(d.getMinutes()).padStart(2,"0")}`;
 }
+// Map vehicle-check item_key → human label (drawn from VEHICLE_CHECK_SECTIONS).
+const _vehicleItemLabel=key=>{
+  for(const sec of (typeof VEHICLE_CHECK_SECTIONS!=="undefined"?VEHICLE_CHECK_SECTIONS:[])){
+    const it=sec.items.find(x=>x.key===key);
+    if(it)return it.label;
+  }
+  return key;
+};
 
-function RecordsHub({activeMine,allMachines,remoteOperators,onBack}){
+// ── Records Hub ───────────────────────────────────────────────────────────
+// Category-first: top-level cards per paperwork type. Tap into a list of that
+// single type with date-range + operator filters. Tap a row to expand its
+// per-type detail renderer.
+function RecordsHub({activeMine,allMachines,remoteOperators,onBack,initialType,readOnly,categoryFilter}){
   const[records,setRecords]=useState([]);
   const[loading,setLoading]=useState(true);
-  const[filter,setFilter]=useState("all");
+  const[view,setView]=useState(initialType?"list":"categories"); // categories | list
+  const[activeType,setActiveType]=useState(initialType||null);
   const[from,setFrom]=useState("");
   const[to,setTo]=useState("");
   const[opSearch,setOpSearch]=useState("");
   const[expanded,setExpanded]=useState(null);
-  // Lookup maps populated on initial load
   const[locById,setLocById]=useState({});
   const[extById,setExtById]=useState({});
-  // Lazy-loaded per-record caches
   const[photosByTicket,setPhotosByTicket]=useState({});
   const[signedUrls,setSignedUrls]=useState({});
-  const[lightbox,setLightbox]=useState(null); // url or null
+  const[lightbox,setLightbox]=useState(null);
 
-  // helpers
   const opMap=useMemo(()=>new Map((remoteOperators||[]).map(o=>[o.id,o.name])),[remoteOperators]);
   const machineMap=useMemo(()=>{const m={};(allMachines||[]).forEach(x=>{m[x.id]=x.model||x.id;});return m;},[allMachines]);
   const machineLabel=id=>machineMap[id]||id||"—";
   const opLabel=id=>opMap.get(id)||"—";
   const loadSignedUrl=async(bucket,path)=>{
     if(!path||signedUrls[path])return signedUrls[path];
-    try{
-      const{data}=await supabase.storage.from(bucket).createSignedUrl(path,3600);
+    try{const{data}=await supabase.storage.from(bucket).createSignedUrl(path,3600);
       if(data?.signedUrl){setSignedUrls(s=>({...s,[path]:data.signedUrl}));return data.signedUrl;}
     }catch(e){console.error("signed url:",e);}
     return null;
@@ -3858,25 +3867,19 @@ function RecordsHub({activeMine,allMachines,remoteOperators,onBack}){
     }catch(e){console.error("handover photos:",e);}
   };
 
-  // Main fetch + populate fire-ext maps
   useEffect(()=>{
     if(!activeMine?.id){setLoading(false);setRecords([]);return;}
     let cancelled=false;
     (async()=>{
       setLoading(true);
       try{
-        const fromIso=from?`${from}T00:00:00`:null;
-        const toIso=to?`${to}T23:59:59`:null;
-        const limit=200;
+        const limit=400;
         const r=async(table,tsCol,fn)=>{
-          let q=supabase.from(table).select("*").eq("mine_id",activeMine.id).order(tsCol,{ascending:false}).limit(limit);
-          if(fromIso)q=q.gte(tsCol,fromIso);
-          if(toIso)q=q.lte(tsCol,toIso);
-          const{data,error}=await q;
+          const{data,error}=await supabase.from(table).select("*").eq("mine_id",activeMine.id).order(tsCol,{ascending:false}).limit(limit);
           if(error){console.warn(`records ${table}:`,error.message);return[];}
           return(data||[]).map(fn).filter(Boolean);
         };
-        const[prestarts,exams,maints,downs,handovers,fires,locRes,extRes]=await Promise.all([
+        const[prestarts,exams,maints,downs,handovers,fires,vehicles,locRes,extRes]=await Promise.all([
           r("prestart_logs","signed_off_at",row=>({
             id:`p_${row.id}`,type:"prestart",ts:new Date(row.signed_off_at).getTime(),iso:row.signed_off_at,
             title:`Pre-start · ${machineLabel(row.machine_id)}`,
@@ -3916,11 +3919,17 @@ function RecordsHub({activeMine,allMachines,remoteOperators,onBack}){
             subtitle:row.notes?row.notes.slice(0,80):(row.status==="pass"?"Inspection passed":"⚠ Inspection failed"),
             operatorName:row.inspector_name||"—",raw:row,
           })),
+          r("vehicle_checks","created_at",row=>({
+            id:`v_${row.id}`,type:"vehicle",ts:new Date(row.created_at).getTime(),iso:row.created_at,
+            title:`Vehicle · ${row.vehicle_label||"—"}`,
+            subtitle:`${row.pass_count||0} pass · ${row.fail_count||0} fail${row.fail_count>0?" ⚠":""}`,
+            operatorName:row.operator_name||"—",raw:row,
+          })),
           supabase.from("extinguisher_locations").select("id,name").eq("mine_id",activeMine.id),
           supabase.from("fire_extinguishers").select("id,serial_number,serial_photo_path,location_id").eq("mine_id",activeMine.id),
         ]);
         if(cancelled)return;
-        const all=[...prestarts,...exams,...maints,...downs,...handovers,...fires].sort((a,b)=>b.ts-a.ts);
+        const all=[...prestarts,...exams,...maints,...downs,...handovers,...fires,...vehicles].sort((a,b)=>b.ts-a.ts);
         setRecords(all);
         if(locRes?.data){const m={};for(const l of locRes.data)m[l.id]=l.name;setLocById(m);}
         if(extRes?.data){const m={};for(const e of extRes.data)m[e.id]=e;setExtById(m);}
@@ -3928,33 +3937,21 @@ function RecordsHub({activeMine,allMachines,remoteOperators,onBack}){
       finally{if(!cancelled)setLoading(false);}
     })();
     return()=>{cancelled=true;};
-  },[activeMine?.id,from,to,(remoteOperators||[]).length,(allMachines||[]).length]);
+  },[activeMine?.id,(remoteOperators||[]).length,(allMachines||[]).length]);
 
-  const filtered=records.filter(r=>{
-    if(filter!=="all"&&r.type!==filter)return false;
-    if(opSearch.trim()){
-      const q=opSearch.toLowerCase();
-      if(!(r.operatorName||"").toLowerCase().includes(q))return false;
+  // Per-type aggregates for the category cards.
+  const visibleTypes=useMemo(()=>{
+    if(!categoryFilter)return RECORD_TYPES;
+    return RECORD_TYPES.filter(t=>categoryFilter.includes(t.id));
+  },[categoryFilter]);
+  const typeStats=useMemo(()=>{
+    const out={};
+    for(const t of visibleTypes){
+      const items=records.filter(r=>r.type===t.id);
+      out[t.id]={count:items.length,latest:items[0]?.ts||null};
     }
-    return true;
-  });
-
-  // Group by local day
-  const groups=[];
-  let curKey=null,curBucket=null;
-  for(const rec of filtered){
-    const k=_ymd(new Date(rec.ts));
-    if(k!==curKey){curKey=k;curBucket={key:k,label:_humanDate(k),items:[]};groups.push(curBucket);}
-    curBucket.items.push(rec);
-  }
-
-  const counts=RECORD_TYPES.reduce((acc,t)=>{
-    if(t.id==="all")acc[t.id]=records.length;
-    else acc[t.id]=records.filter(r=>r.type===t.id).length;
-    return acc;
-  },{});
-
-  const inp={background:C.surface,color:C.text,border:`1px solid ${C.border}`,borderRadius:8,padding:"8px 10px",fontSize:13,outline:"none",fontFamily:"inherit"};
+    return out;
+  },[records,visibleTypes]);
 
   // ── Detail building blocks ─────────────────────────────────────────────
   const KV=({label,value,mono,full})=>(
@@ -3964,12 +3961,12 @@ function RecordsHub({activeMine,allMachines,remoteOperators,onBack}){
     </div>
   );
   const Check=({label,state})=>{
-    // state: true | false | null | undefined  → ✓ / ✗ / —
     const passed=state===true||state==="pass";
     const failed=state===false||state==="fail";
-    const col=passed?C.success:failed?C.danger:C.muted;
-    const icon=passed?"✓":failed?"✗":"–";
-    return <div style={{display:"flex",alignItems:"center",gap:10,padding:"4px 0",fontSize:12}}>
+    const na=state==="na";
+    const col=passed?C.success:failed?C.danger:na?C.muted:C.muted;
+    const icon=passed?"✓":failed?"✗":na?"—":"–";
+    return<div style={{display:"flex",alignItems:"center",gap:10,padding:"4px 0",fontSize:12}}>
       <span style={{width:18,height:18,borderRadius:5,background:passed||failed?col:"transparent",border:passed||failed?"none":`1.5px solid ${col}`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,color:passed||failed?"#000":col,flexShrink:0,fontWeight:900}}>{icon}</span>
       <span style={{color:C.text,flex:1}}>{label}</span>
     </div>;
@@ -3981,12 +3978,12 @@ function RecordsHub({activeMine,allMachines,remoteOperators,onBack}){
     const colors=[C.info,C.success,C.amber,"#e07c2e",C.danger];
     const labels=["Info","Minor","Notable","Major","Critical"];
     const i=Math.max(1,Math.min(5,n||1))-1;
-    return <span style={{background:`${colors[i]}22`,color:colors[i],border:`1px solid ${colors[i]}55`,borderRadius:6,padding:"3px 8px",fontSize:10,fontFamily:F,fontWeight:700,whiteSpace:"nowrap"}}>SEV {n} · {labels[i]}</span>;
+    return<span style={{background:`${colors[i]}22`,color:colors[i],border:`1px solid ${colors[i]}55`,borderRadius:6,padding:"3px 8px",fontSize:10,fontFamily:F,fontWeight:700,whiteSpace:"nowrap"}}>SEV {n} · {labels[i]}</span>;
   };
   const StatusBadge=({status})=>{
     const m={open:C.danger,in_progress:C.amber,awaiting_verification:C.info,fixed:C.info,verified:C.success,closed:C.success,pass:C.success,fail:C.danger};
     const col=m[status]||C.muted;
-    return <span style={{background:`${col}22`,color:col,border:`1px solid ${col}55`,borderRadius:6,padding:"3px 8px",fontSize:10,fontFamily:F,fontWeight:700,textTransform:"uppercase",whiteSpace:"nowrap"}}>{(status||"—").replace(/_/g," ")}</span>;
+    return<span style={{background:`${col}22`,color:col,border:`1px solid ${col}55`,borderRadius:6,padding:"3px 8px",fontSize:10,fontFamily:F,fontWeight:700,textTransform:"uppercase",whiteSpace:"nowrap"}}>{(status||"—").replace(/_/g," ")}</span>;
   };
   const PhotoThumb=({url,size=64,onClick,label})=>(
     <button onClick={onClick} disabled={!url} style={{width:size,height:size,borderRadius:8,background:C.bg,border:`1px solid ${C.border}`,padding:0,overflow:"hidden",cursor:url?"pointer":"default",position:"relative",flexShrink:0}}>
@@ -4128,7 +4125,34 @@ function RecordsHub({activeMine,allMachines,remoteOperators,onBack}){
       </>}
     </>;
   };
-
+  const renderVehicle=raw=>{
+    const results=raw.results||{};
+    const entries=Object.entries(results);
+    const fails=entries.filter(([,v])=>v?.state==="fail");
+    return<>
+      <div style={{display:"flex",gap:8,alignItems:"center",padding:"4px 0 10px"}}>
+        <StatusBadge status={raw.fail_count>0?"fail":"pass"}/>
+        <span style={{fontFamily:F,fontWeight:900,fontSize:13,color:raw.fail_count>0?C.danger:C.success}}>
+          {raw.fail_count>0?`⚠ ${raw.fail_count} defect${raw.fail_count!==1?"s":""}`:"All clear"}
+        </span>
+      </div>
+      <KV label="Vehicle" value={raw.vehicle_label}/>
+      <KV label="Operator" value={raw.operator_name}/>
+      {raw.odometer_km!=null&&<KV label="Odometer" value={`${Number(raw.odometer_km).toLocaleString()} km`}/>}
+      <KV label="Submitted" value={raw.created_at?new Date(raw.created_at).toLocaleString():null}/>
+      <KV label="Summary" value={`${raw.pass_count||0} pass · ${raw.fail_count||0} fail · ${raw.na_count||0} N/A`}/>
+      {fails.length>0&&<>
+        <SectionHdr label="Defects"/>
+        {fails.map(([k,v])=><div key={k} style={{padding:"5px 0",borderBottom:`1px solid ${C.danger}22`}}>
+          <div style={{fontSize:12,fontFamily:F,fontWeight:700,color:C.danger}}>{_vehicleItemLabel(k)}</div>
+          {v.note&&<div style={{fontSize:11,color:C.textSub,marginTop:2,lineHeight:1.4}}>{v.note}</div>}
+        </div>)}
+      </>}
+      <SectionHdr label="All items"/>
+      {entries.map(([k,v])=><Check key={k} label={_vehicleItemLabel(k)} state={v?.state}/>)}
+      {raw.defect_notes&&<KV label="Notes" value={raw.defect_notes} full/>}
+    </>;
+  };
   const renderDetail=rec=>{
     switch(rec.type){
       case"prestart":return renderPrestart(rec.raw);
@@ -4137,10 +4161,10 @@ function RecordsHub({activeMine,allMachines,remoteOperators,onBack}){
       case"downtime":return renderDowntime(rec.raw);
       case"handover":return renderHandover(rec.raw);
       case"fire":return renderFire(rec.raw);
+      case"vehicle":return renderVehicle(rec.raw);
       default:return<div style={{fontSize:11,color:C.muted}}>Unknown record type.</div>;
     }
   };
-
   const onExpand=rec=>{
     const willOpen=expanded!==rec.id;
     setExpanded(willOpen?rec.id:null);
@@ -4152,48 +4176,100 @@ function RecordsHub({activeMine,allMachines,remoteOperators,onBack}){
     }
   };
 
-  return <div style={{paddingBottom:80}}>
-    {/* Lightbox */}
+  const inp={background:C.surface,color:C.text,border:`1px solid ${C.border}`,borderRadius:8,padding:"8px 10px",fontSize:13,outline:"none",fontFamily:"inherit"};
+  const fmtLatest=ts=>{
+    if(!ts)return"No records yet";
+    const k=_ymd(new Date(ts));
+    return`Latest: ${_humanDate(k)} ${_fmtTime(new Date(ts).toISOString())}`;
+  };
+
+  // ── Categories view ───────────────────────────────────────────────────
+  if(view==="categories"){
+    const total=visibleTypes.reduce((a,t)=>a+(typeStats[t.id]?.count||0),0);
+    return<div style={{paddingBottom:80}}>
+      {lightbox&&<div onClick={()=>setLightbox(null)} style={{position:"fixed",inset:0,background:"rgba(0,0,0,.92)",zIndex:600,display:"flex",alignItems:"center",justifyContent:"center",padding:20}}>
+        <img src={lightbox} alt="" style={{maxWidth:"100%",maxHeight:"100%",objectFit:"contain",borderRadius:10}}/>
+        <button onClick={e=>{e.stopPropagation();setLightbox(null);}} style={{position:"absolute",top:14,right:14,background:"rgba(0,0,0,.6)",border:`1px solid ${C.border}`,borderRadius:8,padding:"6px 12px",color:"#fff",fontSize:13,fontFamily:F,fontWeight:700,cursor:"pointer"}}>✕ Close</button>
+      </div>}
+      <PageHdr title={readOnly?"Compliance Records":"Records"} sub={`${total.toLocaleString()} record${total!==1?"s":""}${activeMine?.name?` · ${activeMine.name}`:""}${readOnly?" · read only":""}`} back={!!onBack} onBack={onBack}/>
+      <div style={{padding:"14px 16px"}}>
+        {loading?<div style={{textAlign:"center",padding:40,color:C.muted}}>Loading records…</div>:
+         !activeMine?.id?<div style={{textAlign:"center",padding:"50px 22px"}}>
+          <div style={{fontSize:46,marginBottom:10,opacity:.6}}>📁</div>
+          <div style={{fontFamily:F,fontWeight:900,fontSize:18,color:C.text,marginBottom:6}}>Demo mode</div>
+          <div style={{fontSize:12,color:C.muted,lineHeight:1.6,maxWidth:280,margin:"0 auto"}}>Records appear here when you're signed into a real mine.</div>
+        </div>:visibleTypes.map(t=>{
+           const s=typeStats[t.id]||{count:0,latest:null};
+           const empty=s.count===0;
+           return<button key={t.id} onClick={()=>{setActiveType(t.id);setView("list");setExpanded(null);}}
+             style={{width:"100%",background:C.card,border:`1px solid ${C.border}`,borderLeft:`4px solid ${t.color}`,borderRadius:14,padding:"15px 16px",marginBottom:10,cursor:"pointer",display:"flex",alignItems:"center",gap:14,textAlign:"left",opacity:empty?.65:1,transition:"all .15s"}}>
+             <div style={{width:44,height:44,borderRadius:12,background:`${t.color}22`,border:`1px solid ${t.color}44`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:22,flexShrink:0}}>{t.icon}</div>
+             <div style={{flex:1,minWidth:0}}>
+               <div style={{fontFamily:F,fontWeight:900,fontSize:15,color:C.text}}>{t.label}</div>
+               <div style={{fontSize:11,color:C.muted,marginTop:3}}>{empty?"No records yet":fmtLatest(s.latest)}</div>
+             </div>
+             <div style={{textAlign:"right",flexShrink:0,minWidth:46}}>
+               <div style={{fontFamily:F,fontWeight:900,fontSize:22,color:empty?C.muted:t.color,lineHeight:1}}>{s.count}</div>
+               <div style={{fontSize:9,color:C.muted,marginTop:3,fontFamily:F,fontWeight:700,letterSpacing:".06em",textTransform:"uppercase"}}>record{s.count!==1?"s":""}</div>
+             </div>
+             <span style={{color:C.muted,fontSize:18,marginLeft:2,flexShrink:0}}>›</span>
+           </button>;
+         })}
+      </div>
+    </div>;
+  }
+
+  // ── List view (single type) ───────────────────────────────────────────
+  const meta=RECORD_TYPES.find(t=>t.id===activeType)||RECORD_TYPES[0];
+  const typeRecords=records.filter(r=>r.type===activeType);
+  const filtered=typeRecords.filter(r=>{
+    const recIso=r.iso?new Date(r.iso).getTime():r.ts;
+    if(from&&recIso<new Date(`${from}T00:00:00`).getTime())return false;
+    if(to&&recIso>new Date(`${to}T23:59:59`).getTime())return false;
+    if(opSearch.trim()){
+      const q=opSearch.toLowerCase();
+      if(!(r.operatorName||"").toLowerCase().includes(q))return false;
+    }
+    return true;
+  });
+  // Group by local day
+  const groups=[];
+  let curKey=null,curBucket=null;
+  for(const rec of filtered){
+    const k=_ymd(new Date(rec.ts));
+    if(k!==curKey){curKey=k;curBucket={key:k,label:_humanDate(k),items:[]};groups.push(curBucket);}
+    curBucket.items.push(rec);
+  }
+
+  return<div style={{paddingBottom:80}}>
     {lightbox&&<div onClick={()=>setLightbox(null)} style={{position:"fixed",inset:0,background:"rgba(0,0,0,.92)",zIndex:600,display:"flex",alignItems:"center",justifyContent:"center",padding:20}}>
       <img src={lightbox} alt="" style={{maxWidth:"100%",maxHeight:"100%",objectFit:"contain",borderRadius:10}}/>
       <button onClick={e=>{e.stopPropagation();setLightbox(null);}} style={{position:"absolute",top:14,right:14,background:"rgba(0,0,0,.6)",border:`1px solid ${C.border}`,borderRadius:8,padding:"6px 12px",color:"#fff",fontSize:13,fontFamily:F,fontWeight:700,cursor:"pointer"}}>✕ Close</button>
     </div>}
+    <PageHdr title={meta.label} sub={`${typeRecords.length} record${typeRecords.length!==1?"s":""}${filtered.length!==typeRecords.length?` · ${filtered.length} matching filter`:""}`} back onBack={()=>{setView("categories");setActiveType(null);setExpanded(null);setFrom("");setTo("");setOpSearch("");}}/>
 
-    <PageHdr title="Records" sub={`Inspection archive · everyone in this mine${activeMine?.name?` · ${activeMine.name}`:""}`} back onBack={onBack}/>
-
-    {/* Filter chips + date range + operator search */}
-    <div style={{padding:"10px 12px 6px",borderBottom:`1px solid ${C.border}`,background:`${C.surface}cc`,position:"sticky",top:0,zIndex:10,backdropFilter:"blur(8px)"}}>
-      <div style={{display:"flex",gap:6,overflowX:"auto",paddingBottom:8,marginBottom:8,WebkitOverflowScrolling:"touch"}}>
-        {RECORD_TYPES.map(t=>{
-          const active=filter===t.id;
-          const n=counts[t.id]||0;
-          return<button key={t.id} onClick={()=>setFilter(t.id)}
-            style={{flexShrink:0,background:active?`${t.color}22`:C.card,border:`1px solid ${active?t.color:C.border}`,borderRadius:99,padding:"5px 11px",color:active?t.color:C.textSub,fontSize:11,fontFamily:F,fontWeight:700,cursor:"pointer",whiteSpace:"nowrap",display:"flex",alignItems:"center",gap:6}}>
-            <span>{t.icon}</span>{t.label}<span style={{color:active?t.color:C.muted,opacity:.7,fontSize:10}}>{n}</span>
-          </button>;
-        })}
+    {/* Filter strip */}
+    <div style={{padding:"10px 12px 8px",borderBottom:`1px solid ${C.border}`,background:`${C.surface}cc`,position:"sticky",top:0,zIndex:10,backdropFilter:"blur(8px)"}}>
+      <div style={{display:"flex",gap:6}}>
+        <input type="date" value={from} onChange={e=>setFrom(e.target.value)} style={{...inp,flex:1,minWidth:0}} title="From"/>
+        <input type="date" value={to} onChange={e=>setTo(e.target.value)} style={{...inp,flex:1,minWidth:0}} title="To"/>
+        <input value={opSearch} onChange={e=>setOpSearch(e.target.value)} placeholder="Operator" style={{...inp,flex:1.1,minWidth:0}}/>
       </div>
-      <div style={{display:"flex",gap:6,marginBottom:0}}>
-        <input type="date" value={from} onChange={e=>setFrom(e.target.value)} style={{...inp,flex:1,minWidth:0}}/>
-        <input type="date" value={to} onChange={e=>setTo(e.target.value)} style={{...inp,flex:1,minWidth:0}}/>
-        <input value={opSearch} onChange={e=>setOpSearch(e.target.value)} placeholder="Operator name" style={{...inp,flex:1.2,minWidth:0}}/>
-      </div>
-      {(from||to||opSearch||filter!=="all")&&<button onClick={()=>{setFilter("all");setFrom("");setTo("");setOpSearch("");}}
+      {(from||to||opSearch)&&<button onClick={()=>{setFrom("");setTo("");setOpSearch("");}}
         style={{background:"none",border:"none",color:C.muted,fontSize:11,fontFamily:F,fontWeight:700,cursor:"pointer",padding:"6px 0 0",letterSpacing:".04em"}}>Clear filters ×</button>}
     </div>
 
     <div style={{padding:"10px 14px"}}>
-      {loading&&<div style={{textAlign:"center",padding:40,color:C.muted}}>Loading records…</div>}
-      {!loading&&records.length===0&&<div style={{textAlign:"center",padding:"50px 22px"}}>
-        <div style={{fontSize:46,marginBottom:10,opacity:.6}}>📁</div>
-        <div style={{fontFamily:F,fontWeight:900,fontSize:18,color:C.text,marginBottom:6}}>No records yet</div>
-        <div style={{fontSize:12,color:C.muted,lineHeight:1.6,maxWidth:280,margin:"0 auto"}}>Every signed-off inspection — pre-starts, workplace exams, maintenance, handovers, fire extinguisher checks — appears here once they're logged.</div>
+      {loading&&<div style={{textAlign:"center",padding:40,color:C.muted}}>Loading…</div>}
+      {!loading&&typeRecords.length===0&&<div style={{textAlign:"center",padding:"50px 22px"}}>
+        <div style={{fontSize:46,marginBottom:10,opacity:.6}}>{meta.icon}</div>
+        <div style={{fontFamily:F,fontWeight:900,fontSize:18,color:C.text,marginBottom:6}}>No {meta.shortLabel.toLowerCase()} records yet</div>
+        <div style={{fontSize:12,color:C.muted,lineHeight:1.6,maxWidth:300,margin:"0 auto"}}>Records appear here once they're signed off in the app.</div>
       </div>}
-      {!loading&&records.length>0&&filtered.length===0&&<div style={{textAlign:"center",padding:"40px 22px",color:C.muted,fontSize:13}}>No records match these filters.</div>}
+      {!loading&&typeRecords.length>0&&filtered.length===0&&<div style={{textAlign:"center",padding:"40px 22px",color:C.muted,fontSize:13}}>No records match these filters.</div>}
       {groups.map(g=><div key={g.key} style={{marginBottom:14}}>
         <div style={{fontFamily:F,fontWeight:900,fontSize:11,color:C.muted,letterSpacing:".1em",textTransform:"uppercase",padding:"4px 4px 8px"}}>{g.label} · {g.items.length}</div>
         {g.items.map(rec=>{
-          const meta=RECORD_TYPES.find(t=>t.id===rec.type)||RECORD_TYPES[0];
           const isOpen=expanded===rec.id;
           return<div key={rec.id} style={{background:C.card,border:`1px solid ${isOpen?meta.color+"66":C.border}`,borderLeft:`3px solid ${meta.color}`,borderRadius:10,marginBottom:6,overflow:"hidden"}}>
             <button onClick={()=>onExpand(rec)}
