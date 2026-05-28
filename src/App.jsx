@@ -2198,7 +2198,7 @@ function ChecksHub({allMachines,catDemo,activeMine,activeShiftId,user}){
 
 
 
-function MenuOverlay({user,onNav,onVehicleCheck,onClose,allMachines}){
+function MenuOverlay({user,onNav,onVehicleCheck,onClose,allMachines,activeMine}){
   const lv=ROLES[user?.role]?.level||1;
   const isAdmin=user?.role==="admin"||user?.role==="minemanager";
   const Section=({title,children})=><div style={{marginBottom:6}}>
