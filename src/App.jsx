@@ -55,13 +55,6 @@ const ROLES={
 const OP={revenuePerTonne:10,shiftHours:10,targetFillPct:95,idleAlertMins:45,
   crushers:[{id:"C1",name:"Crusher 1",capacityTph:320},{id:"C2",name:"Crusher 2",capacityTph:60}]};
 
-const TRUCK_CHECKS=[
-  {id:"lights",label:"Lights & indicators working"},
-  {id:"tyres", label:"Tyre condition — no cuts or bulges"},
-  {id:"brakes",label:"Brakes operational"},
-  {id:"fluid", label:"No fluid leaks under vehicle"},
-  {id:"belt",  label:"Seatbelt functional & clicks in"},
-];
 // MQSHA minimum — do NOT add items not in the HSMP
 const PRESTART=[
   {id:"oil",    label:"Engine oil level — OK"},
@@ -292,19 +285,250 @@ function CkRow({label,checked,onChange,checkId,machineType,onPhoto}){return <div
 function MiniLine({values,color}){const W=80,H=24,mn=Math.min(...values)-2,mx=Math.max(...values)+2;const sx=i=>(i/(values.length-1))*W,sy=v=>H-((v-mn)/(mx-mn))*H;return <svg width={W} height={H} style={{overflow:"visible"}}><polyline points={values.map((v,i)=>`${sx(i)},${sy(v)}`).join(" ")} fill="none" stroke={color} strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round"/><circle cx={sx(values.length-1)} cy={sy(values[values.length-1])} r={2.5} fill={color}/></svg>}
 
 // ── Truck Check (shared by all roles) ────────────────────────────────────
-function TruckCheckScreen({onComplete}){
-  const[checks,setChecks]=useState({});const allDone=TRUCK_CHECKS.every(c=>checks[c.id]);
-  return <div style={{minHeight:"100vh",display:"flex",flexDirection:"column",justifyContent:"center",padding:"28px 20px"}} className="up">
-    <div style={{textAlign:"center",marginBottom:22}}><div style={{fontSize:48,marginBottom:8}}>🚗</div><div style={{fontFamily:F,fontWeight:900,fontSize:28,color:C.accent}}>TRUCK CHECK</div><div style={{fontSize:12,color:C.muted,marginTop:4}}>MQSHA Reg 2017 Sch 5 · tick each item</div></div>
-    <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:14,padding:"4px 16px",marginBottom:18}}>
-      {TRUCK_CHECKS.map(c=>{const done=!!checks[c.id];return <div key={c.id} onClick={()=>setChecks(p=>({...p,[c.id]:!p[c.id]}))} style={{display:"flex",alignItems:"center",gap:14,padding:"15px 0",borderBottom:`1px solid ${C.border}22`,cursor:"pointer"}}>
-        <div style={{width:28,height:28,borderRadius:7,background:done?C.success:"transparent",border:`2px solid ${done?C.success:C.border}`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:16,flexShrink:0,transition:"all .15s"}}>{done?"✓":""}</div>
-        <span style={{fontSize:15,color:done?C.text:C.textSub,fontFamily:F,fontWeight:done?700:400,flex:1}}>{c.label}</span>
-      </div>;})}
+// ── Vehicle Check Definitions ─────────────────────────────────────────────
+// Sectioned pre-operational inspection. photoEncouraged → big camera CTA
+// on the row. requirePhotoOnFail → when state==='fail', must capture a
+// photo before sign-off (in addition to a written defect note).
+const VEHICLE_CHECK_SECTIONS=[
+  {title:"Exterior",icon:"🚗",items:[
+    {key:"tyres",     label:"Tyres",                hint:"Tread depth · cuts · bulges · pressure",   photoEncouraged:true},
+    {key:"lights",    label:"Lights & indicators",  hint:"Head · tail · brake · indicators · hazards",photoEncouraged:true},
+    {key:"mirrors",   label:"Mirrors",              hint:"All present, adjusted, intact"},
+    {key:"windscreen",label:"Windscreen & wipers",  hint:"No cracks · wipers + washers working"},
+    {key:"body",      label:"Body damage",          hint:"New dents · scrapes · loose panels"},
+  ]},
+  {title:"Engine bay",icon:"⚙",items:[
+    {key:"oil",       label:"Engine oil level",     hint:"Between MIN and MAX on dipstick"},
+    {key:"coolant",   label:"Coolant level",        hint:"Cold check only · between marks"},
+    {key:"brake_fl",  label:"Brake fluid level",    hint:"Reservoir between marks"},
+    {key:"leaks",     label:"No fluid leaks under vehicle",hint:"Walk around · check ground", photoEncouraged:true},
+  ]},
+  {title:"Cabin",icon:"🪑",items:[
+    {key:"seatbelt",  label:"Seatbelt operates correctly", hint:"Clicks in · retracts · no fraying"},
+    {key:"horn",      label:"Horn works"},
+    {key:"dash",      label:"No dash warning lights"},
+    {key:"brakes",    label:"Brake test — pedal firm",    hint:"With engine running, pedal stays firm"},
+    {key:"handbrake", label:"Handbrake holds"},
+    {key:"steering",  label:"Steering — no excessive play"},
+  ]},
+  {title:"Load & towing",icon:"🪢",items:[
+    {key:"load_sec",  label:"Load secured",                hint:"Straps / cargo barrier intact (N/A if empty)"},
+    {key:"tow",       label:"Tow equipment intact",        hint:"Hitch · chains · electrics (N/A if not towing)"},
+  ]},
+  {title:"Emergency gear",icon:"🚨",items:[
+    {key:"fire_ext",  label:"Fire extinguisher present + in date"},
+    {key:"first_aid", label:"First aid kit present + sealed"},
+    {key:"hi_vis",    label:"Hi-vis vest in cab"},
+    {key:"triangle",  label:"Warning triangle / cones"},
+  ]},
+];
+const ALL_VEHICLE_ITEMS=VEHICLE_CHECK_SECTIONS.flatMap(s=>s.items);
+
+// ── Vehicle Check Row ─────────────────────────────────────────────────────
+function VehicleCheckRow({item,value,onChange}){
+  const fileRef=useRef(null);
+  const[thumbUrl,setThumbUrl]=useState(null);
+  useEffect(()=>{
+    if(!value?.photo){setThumbUrl(null);return;}
+    const u=URL.createObjectURL(value.photo);setThumbUrl(u);
+    return()=>URL.revokeObjectURL(u);
+  },[value?.photo]);
+  const set=patch=>onChange({...(value||{}),...patch});
+  const state=value?.state;
+  const fail=state==="fail";
+  const failNeedsEvidence=fail&&!(value?.note?.trim()||value?.photo);
+  const Btn=({val,lb,col})=>{
+    const sel=state===val;
+    return<button type="button" onClick={()=>set({state:val})}
+      style={{flex:1,background:sel?col:"transparent",color:sel?"#000":col,border:`2px solid ${col}`,borderRadius:9,padding:"8px 0",fontFamily:F,fontWeight:900,fontSize:12,letterSpacing:".04em",cursor:"pointer",transition:"all .15s"}}>{lb}</button>;
+  };
+  return<div style={{padding:"12px 0",borderBottom:`1px solid ${C.border}22`}}>
+    <div style={{display:"flex",alignItems:"flex-start",justifyContent:"space-between",gap:10,marginBottom:8}}>
+      <div style={{flex:1,minWidth:0}}>
+        <div style={{fontFamily:F,fontWeight:700,fontSize:14,color:C.text}}>{item.label}</div>
+        {item.hint&&<div style={{fontSize:11,color:C.muted,marginTop:2}}>{item.hint}</div>}
+      </div>
+      {(item.photoEncouraged||fail||value?.photo)&&<button type="button" onClick={()=>fileRef.current?.click()}
+        style={{background:value?.photo?`${C.success}15`:`${C.info}15`,border:`1px solid ${value?.photo?C.success:C.info}55`,borderRadius:8,padding:"5px 9px",color:value?.photo?C.success:C.info,fontSize:13,cursor:"pointer",lineHeight:1,flexShrink:0}}
+        title={value?.photo?"Retake photo":"Attach photo"}>📷</button>}
     </div>
-    <button onClick={()=>{if(allDone)onComplete();}} style={{width:"100%",background:allDone?C.success:C.border,color:allDone?"#000":C.muted,border:"none",borderRadius:12,padding:"17px",fontFamily:F,fontWeight:900,fontSize:20,cursor:allDone?"pointer":"default",transition:"background .2s"}}>
-      {allDone?"✅  ALL GOOD — CONTINUE":`${TRUCK_CHECKS.filter(c=>!checks[c.id]).length} items remaining`}
-    </button>
+    <div style={{display:"flex",gap:6,marginBottom:value?.photo||fail?8:0}}>
+      <Btn val="pass" lb="✓ Pass" col={C.success}/>
+      <Btn val="fail" lb="✕ Fail" col={C.danger}/>
+      <Btn val="na"   lb="N/A"   col={C.muted}/>
+    </div>
+    {value?.photo&&thumbUrl&&<div style={{display:"flex",alignItems:"center",gap:8,marginTop:6}}>
+      <img src={thumbUrl} alt="" style={{width:46,height:46,borderRadius:6,objectFit:"cover",border:`1px solid ${C.border}`}}/>
+      <button type="button" onClick={()=>fileRef.current?.click()}
+        style={{background:"none",border:`1px solid ${C.border}`,borderRadius:7,padding:"4px 9px",color:C.muted,fontSize:11,fontFamily:F,fontWeight:700,cursor:"pointer"}}>Retake</button>
+      <button type="button" onClick={()=>set({photo:null})}
+        style={{background:"none",border:`1px solid ${C.danger}33`,borderRadius:7,padding:"4px 9px",color:C.danger,fontSize:11,fontFamily:F,fontWeight:700,cursor:"pointer"}}>✕</button>
+    </div>}
+    {fail&&<div style={{marginTop:8}}>
+      <input value={value?.note||""} onChange={e=>set({note:e.target.value})}
+        placeholder="What's wrong? (required for fail)"
+        style={{background:C.surface,color:C.text,border:`1px solid ${value?.note?.trim()?C.success:C.danger}55`,borderRadius:8,padding:"9px 12px",fontSize:13,width:"100%",outline:"none",boxSizing:"border-box",fontFamily:"inherit"}}/>
+      {failNeedsEvidence&&<div style={{fontSize:10,color:C.danger,marginTop:4,fontFamily:F,fontWeight:700,letterSpacing:".04em"}}>⚠ Note or photo required for fail</div>}
+    </div>}
+    <input ref={fileRef} type="file" accept="image/*" capture="environment" style={{display:"none"}}
+      onChange={e=>{const f=e.target.files?.[0];if(f)set({photo:f});e.target.value="";}}/>
+  </div>;
+}
+
+// ── Vehicle Check Screen ──────────────────────────────────────────────────
+// Polished pre-operational inspection. Save writes a vehicle_checks row +
+// uploads any attached photos to check-photos with log_type='vehicle_check'.
+function TruckCheckScreen({onComplete,activeMine,activeShiftId,user}){
+  const[phase,setPhase]=useState("form"); // form | summary | done
+  const[vehicleLabel,setVehicleLabel]=useState("");
+  const[odo,setOdo]=useState("");
+  const[items,setItems]=useState({});      // {key: {state, note, photo}}
+  const[defectNotes,setDefectNotes]=useState("");
+  const[submitting,setSubmitting]=useState(false);
+  const[err,setErr]=useState("");
+
+  const counts={
+    pass:ALL_VEHICLE_ITEMS.filter(i=>items[i.key]?.state==="pass").length,
+    fail:ALL_VEHICLE_ITEMS.filter(i=>items[i.key]?.state==="fail").length,
+    na:  ALL_VEHICLE_ITEMS.filter(i=>items[i.key]?.state==="na").length,
+  };
+  const pending=ALL_VEHICLE_ITEMS.length-counts.pass-counts.fail-counts.na;
+  const failItems=ALL_VEHICLE_ITEMS.filter(i=>items[i.key]?.state==="fail");
+  const failsHaveEvidence=failItems.every(i=>(items[i.key]?.note?.trim()||items[i.key]?.photo));
+  const canReview=pending===0&&vehicleLabel.trim()&&failsHaveEvidence;
+
+  const submit=async()=>{
+    if(submitting)return;
+    setSubmitting(true);setErr("");
+    try{
+      let row=null;
+      if(activeMine?.id){
+        const odNum=odo.trim()?parseInt(odo,10):null;
+        const{data,error}=await supabase.from("vehicle_checks").insert({
+          mine_id:activeMine.id,
+          shift_id:activeShiftId||null,
+          operator_id:user?.id||null,
+          operator_name:user?.name||"Operator",
+          vehicle_label:vehicleLabel.trim(),
+          odometer_km:Number.isFinite(odNum)?odNum:null,
+          results:Object.fromEntries(Object.entries(items).map(([k,v])=>[k,{state:v?.state||null,note:v?.note?.trim()||null}])),
+          defect_notes:defectNotes.trim()||null,
+          pass_count:counts.pass,fail_count:counts.fail,na_count:counts.na,
+        }).select().single();
+        if(error)throw error;
+        row=data;
+        const tasks=Object.entries(items).filter(([,v])=>v?.photo).map(([k,v])=>uploadCheckPhoto({
+          file:v.photo,mineId:activeMine.id,logType:"vehicle_check",logId:row.id,itemKey:k,uploadedBy:user?.id,
+        }));
+        await Promise.all(tasks);
+      }
+      setPhase("done");
+    }catch(e){console.error("vehicle check submit:",e);setErr(e.message||"Could not submit. Try again.");}
+    finally{setSubmitting(false);}
+  };
+
+  if(phase==="done")return<div style={{minHeight:"100vh",display:"flex",flexDirection:"column",justifyContent:"center",alignItems:"center",padding:"36px 22px",textAlign:"center"}} className="up">
+    <div style={{fontSize:62,marginBottom:14}}>{counts.fail>0?"⚠️":"✅"}</div>
+    <div style={{fontFamily:F,fontWeight:900,fontSize:26,color:counts.fail>0?C.amber:C.success,marginBottom:8}}>{counts.fail>0?"Submitted with defects":"All clear"}</div>
+    <div style={{fontSize:13,color:C.muted,marginBottom:22,maxWidth:300,lineHeight:1.5}}>
+      {vehicleLabel} · {counts.pass} pass · {counts.fail} fail · {counts.na} N/A
+      {counts.fail>0&&<><br/><br/><span style={{color:C.amber}}>Notify your supervisor before driving.</span></>}
+    </div>
+    <button onClick={onComplete} style={{width:"100%",maxWidth:300,background:C.success,color:"#000",border:"none",borderRadius:14,padding:"16px",fontFamily:F,fontWeight:900,fontSize:17,letterSpacing:".04em",cursor:"pointer"}}>Continue →</button>
+  </div>;
+
+  if(phase==="summary")return<div style={{paddingBottom:90}}>
+    <PageHdr title="Review & submit" sub={`${vehicleLabel} · ${counts.pass+counts.fail+counts.na} items checked`} back onBack={()=>setPhase("form")}/>
+    <div style={{padding:"14px 16px"}}>
+      <div style={{display:"flex",gap:6,marginBottom:14}}>
+        <div style={{flex:1,background:`${C.success}10`,border:`1px solid ${C.success}44`,borderRadius:12,padding:"12px",textAlign:"center"}}>
+          <div style={{fontFamily:F,fontWeight:900,fontSize:24,color:C.success}}>{counts.pass}</div>
+          <div style={{fontSize:10,color:C.muted,fontFamily:F,fontWeight:700,letterSpacing:".06em",textTransform:"uppercase",marginTop:2}}>Pass</div>
+        </div>
+        <div style={{flex:1,background:`${C.danger}10`,border:`1px solid ${C.danger}44`,borderRadius:12,padding:"12px",textAlign:"center"}}>
+          <div style={{fontFamily:F,fontWeight:900,fontSize:24,color:C.danger}}>{counts.fail}</div>
+          <div style={{fontSize:10,color:C.muted,fontFamily:F,fontWeight:700,letterSpacing:".06em",textTransform:"uppercase",marginTop:2}}>Fail</div>
+        </div>
+        <div style={{flex:1,background:`${C.muted}10`,border:`1px solid ${C.muted}44`,borderRadius:12,padding:"12px",textAlign:"center"}}>
+          <div style={{fontFamily:F,fontWeight:900,fontSize:24,color:C.muted}}>{counts.na}</div>
+          <div style={{fontSize:10,color:C.muted,fontFamily:F,fontWeight:700,letterSpacing:".06em",textTransform:"uppercase",marginTop:2}}>N/A</div>
+        </div>
+      </div>
+
+      {failItems.length>0?<div style={{background:`${C.danger}08`,border:`1px solid ${C.danger}33`,borderRadius:12,padding:"12px 14px",marginBottom:14}}>
+        <div style={{fontFamily:F,fontWeight:900,fontSize:12,color:C.danger,letterSpacing:".06em",textTransform:"uppercase",marginBottom:8}}>⚠ Defects logged</div>
+        {failItems.map(i=>{
+          const v=items[i.key];
+          return<div key={i.key} style={{padding:"6px 0",borderBottom:`1px solid ${C.danger}22`,fontSize:12}}>
+            <div style={{fontFamily:F,fontWeight:700,color:C.text}}>{i.label}</div>
+            {v.note&&<div style={{color:C.textSub,marginTop:2}}>{v.note}</div>}
+            {v.photo&&<div style={{fontSize:10,color:C.success,marginTop:2,fontFamily:F,fontWeight:700,letterSpacing:".04em"}}>📷 PHOTO ATTACHED</div>}
+          </div>;
+        })}
+      </div>:<div style={{background:`${C.success}08`,border:`1px solid ${C.success}33`,borderRadius:12,padding:"12px 14px",marginBottom:14,fontSize:12,color:C.success,fontFamily:F,fontWeight:700}}>✓ No defects — vehicle ready for use</div>}
+
+      <div style={{fontSize:11,color:C.muted,marginBottom:5,fontFamily:F,fontWeight:700,letterSpacing:".06em",textTransform:"uppercase"}}>Additional notes <span style={{color:C.muted,fontWeight:400}}>· optional</span></div>
+      <textarea value={defectNotes} onChange={e=>setDefectNotes(e.target.value)} rows={3}
+        placeholder="Anything else the next driver / mechanic should know?"
+        style={{background:C.surface,color:C.text,border:`1px solid ${C.border}`,borderRadius:9,padding:"10px 13px",fontSize:13,width:"100%",outline:"none",boxSizing:"border-box",fontFamily:"inherit",resize:"vertical",marginBottom:14}}/>
+
+      {err&&<div style={{background:`${C.danger}15`,border:`1px solid ${C.danger}44`,borderRadius:10,padding:"10px 12px",marginBottom:10,fontSize:12,color:C.danger}}>{err}</div>}
+
+      <button onClick={submit} disabled={submitting}
+        style={{width:"100%",background:submitting?C.border:`linear-gradient(135deg,${C.accent},#d4881e)`,color:submitting?C.muted:"#000",border:"none",borderRadius:14,padding:"16px",fontFamily:F,fontWeight:900,fontSize:18,letterSpacing:".04em",cursor:submitting?"default":"pointer"}}>
+        {submitting?"Saving…":"✅ Sign Off Inspection"}
+      </button>
+    </div>
+  </div>;
+
+  // form
+  return<div style={{paddingBottom:130}}>
+    <PageHdr title="Vehicle Pre-Op Check" sub="Pre-operational inspection · MSHA / MQSHA"/>
+    <div style={{padding:"14px 16px"}}>
+      <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:12,padding:"12px 14px",marginBottom:14}}>
+        <div style={{fontSize:11,color:C.muted,marginBottom:5,fontFamily:F,fontWeight:700,letterSpacing:".06em",textTransform:"uppercase"}}>Vehicle <span style={{color:C.danger}}>*</span></div>
+        <input value={vehicleLabel} onChange={e=>setVehicleLabel(e.target.value)}
+          placeholder="e.g. Toyota Hilux · Rego ABC 123"
+          style={{background:C.surface,color:C.text,border:`1px solid ${vehicleLabel.trim()?C.success:C.border}`,borderRadius:8,padding:"10px 12px",fontSize:14,width:"100%",outline:"none",boxSizing:"border-box",marginBottom:10}}/>
+        <div style={{fontSize:11,color:C.muted,marginBottom:5,fontFamily:F,fontWeight:700,letterSpacing:".06em",textTransform:"uppercase"}}>Odometer <span style={{color:C.muted,fontWeight:400}}>· optional · km</span></div>
+        <input value={odo} onChange={e=>setOdo(e.target.value.replace(/[^\d]/g,""))} inputMode="numeric" placeholder="e.g. 84203"
+          style={{background:C.surface,color:C.text,border:`1px solid ${C.border}`,borderRadius:8,padding:"10px 12px",fontSize:14,width:"100%",outline:"none",boxSizing:"border-box"}}/>
+      </div>
+
+      {VEHICLE_CHECK_SECTIONS.map(sec=>(
+        <div key={sec.title} style={{marginBottom:14}}>
+          <div style={{display:"flex",alignItems:"center",gap:8,padding:"4px 4px 8px"}}>
+            <span style={{fontSize:16}}>{sec.icon}</span>
+            <span style={{fontFamily:F,fontWeight:900,fontSize:11,color:C.muted,letterSpacing:".1em",textTransform:"uppercase"}}>{sec.title}</span>
+            <span style={{flex:1,height:1,background:`${C.border}66`,marginLeft:8}}/>
+          </div>
+          <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:12,padding:"4px 14px"}}>
+            {sec.items.map(item=><VehicleCheckRow key={item.key} item={item}
+              value={items[item.key]}
+              onChange={v=>setItems(p=>({...p,[item.key]:v}))}/>)}
+          </div>
+        </div>
+      ))}
+    </div>
+
+    {/* Sticky footer with counts + Review CTA */}
+    <div style={{position:"fixed",bottom:0,left:"50%",transform:"translateX(-50%)",width:"100%",maxWidth:420,background:`${C.bg}f5`,backdropFilter:"blur(10px)",borderTop:`1px solid ${C.border}`,padding:"12px 16px 18px"}}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8,fontSize:11}}>
+        <span style={{color:C.muted,fontFamily:F,fontWeight:700,letterSpacing:".04em"}}>{pending===0?"All items checked":`${pending} item${pending!==1?"s":""} left`}</span>
+        <span style={{fontFamily:F,fontWeight:700}}>
+          <span style={{color:C.success}}>✓ {counts.pass}</span>
+          {" · "}<span style={{color:C.danger}}>✕ {counts.fail}</span>
+          {" · "}<span style={{color:C.muted}}>— {counts.na}</span>
+        </span>
+      </div>
+      <button onClick={()=>setPhase("summary")} disabled={!canReview}
+        style={{width:"100%",background:canReview?C.success:C.border,color:canReview?"#000":C.muted,border:"none",borderRadius:12,padding:"15px",fontFamily:F,fontWeight:900,fontSize:17,letterSpacing:".04em",cursor:canReview?"pointer":"default"}}>
+        {pending>0?`Answer remaining ${pending} item${pending!==1?"s":""}`:
+         !vehicleLabel.trim()?"Enter vehicle name":
+         !failsHaveEvidence?"Add note/photo for failed items":
+         "Review & Submit →"}
+      </button>
+    </div>
   </div>;
 }
 
@@ -5778,7 +6002,7 @@ function MineOpsApp() {
   const handleSignOut=async()=>{await supabase.auth.signOut();try{localStorage.removeItem("mineops:activeMineId");}catch(e){}setUser(null);setActiveMine(null);setRemoteMachines(null);setRemoteOperators(null);setActiveShiftId(null);setFlow("auth");setTab("today");setShowSignOut(false);setMenuOpen(false);}
   const homeTab=lv===1?"today":"board";
   const screen=()=>{
-    if(flow==="vehicleCheck")return <TruckCheckScreen onComplete={()=>setFlow("app")}/>
+    if(flow==="vehicleCheck")return <TruckCheckScreen onComplete={()=>setFlow("app")} activeMine={activeMine} activeShiftId={activeShiftId} user={user}/>
     if(tab==="today")return <TodayScreen user={user} activeMine={activeMine} activeShiftId={activeShiftId} allMachines={allMachines}
       onGoChecks={()=>setTab("checks")} onGoProduction={()=>setTab("ops")} onGoRecords={()=>setTab("records")}
       onReportIssue={()=>setFlow("reportIssue")} onVehicleCheck={()=>setFlow("vehicleCheck")} onWorkplaceExam={()=>setFlow("workplaceExam")}/>
@@ -5807,7 +6031,7 @@ function MineOpsApp() {
     {flow==="createMine"&&<div style={{flex:1,overflowY:"auto"}}><CreateMineFlow onComplete={()=>{setProfileBump(n=>n+1);setFlow("truckQ");}} onBack={()=>setFlow(activeMine?"app":"onboarding")}/></div>}
     {flow==="joinMine"&&<div style={{flex:1,overflowY:"auto"}}><JoinMineFlow onComplete={()=>{setProfileBump(n=>n+1);setFlow("truckQ");}} onBack={()=>setFlow(activeMine?"app":"onboarding")}/></div>}
     {flow==="truckQ"&&<div style={{flex:1,overflowY:"auto"}}><TruckQuestion user={user} onAnswer={handleTruck}/></div>}
-    {flow==="truckCheck"&&<div style={{flex:1,overflowY:"auto"}}><TruckCheckScreen onComplete={()=>setFlow(lv===1?"machines":"app")}/></div>}
+    {flow==="truckCheck"&&<div style={{flex:1,overflowY:"auto"}}><TruckCheckScreen onComplete={()=>setFlow(lv===1?"machines":"app")} activeMine={activeMine} activeShiftId={activeShiftId} user={user}/></div>}
     {flow==="machines"&&<div style={{flex:1,overflowY:"auto"}}><MachineSelectScreen allMachines={allMachines} catDemo={catDemo} isAdmin={user?.role==="admin"} activeMine={activeMine} activeShiftId={activeShiftId} user={user} onAddMachine={()=>setFlow("addMachine")} onComplete={()=>setFlow("app")}/></div>}
     {flow==="addMachine"&&<div style={{flex:1,overflowY:"auto"}}><AddMachineScreen allMachines={allMachines} onAdd={handleAddMachine} onBack={()=>setFlow("app")}/></div>}
     {flow==="inspHistory"&&<div style={{flex:1,overflowY:"auto"}}><PreshiftHistoryScreen mineId={activeMine?.id} onBack={()=>setFlow("setup")}/></div>}
