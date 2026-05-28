@@ -2469,6 +2469,7 @@ function MenuOverlay({user,onNav,onVehicleCheck,onClose,allMachines,activeMine})
 
         <Section title="Mine">
           <Item icon="🔀" label="Switch Mine" sub={activeMine?.name?`Currently: ${activeMine.name}`:"Pick a different mine or add a new one"} color={C.info} onClick={()=>{onNav("minePicker");onClose();}}/>
+          <Item icon="🔒" label="Compliance View" sub="Read-only records · for inspector handover" color={C.accent} onClick={()=>{onNav("compliance");onClose();}}/>
           <Item icon="👤" label="Account" sub="Profile · password · memberships · delete" onClick={()=>{onNav("account");onClose();}}/>
         </Section>
 
@@ -4291,6 +4292,179 @@ function RecordsHub({activeMine,allMachines,remoteOperators,onBack,initialType,r
   </div>;
 }
 
+// ── Compliance PIN helper ─────────────────────────────────────────────────
+async function hashCompliancePin(pin,mineId){
+  if(!pin||!mineId)return null;
+  const enc=new TextEncoder().encode(`${mineId}:${pin}`);
+  const buf=await crypto.subtle.digest("SHA-256",enc);
+  return Array.from(new Uint8Array(buf)).map(b=>b.toString(16).padStart(2,"0")).join("");
+}
+
+// ── PIN entry modal (used to exit compliance view) ────────────────────────
+function CompliancePinModal({mineId,pinHash,onClose,onSuccess}){
+  const[digits,setDigits]=useState("");
+  const[checking,setChecking]=useState(false);
+  const[err,setErr]=useState("");
+  const[shake,setShake]=useState(false);
+  const submit=async d=>{
+    if(d.length!==4||checking)return;
+    setChecking(true);setErr("");
+    try{
+      const h=await hashCompliancePin(d,mineId);
+      if(h===pinHash){onSuccess();}
+      else{setErr("Wrong PIN. Try again.");setShake(true);setDigits("");setTimeout(()=>setShake(false),420);}
+    }catch(e){console.error("pin check:",e);setErr("Couldn't verify PIN.");}
+    finally{setChecking(false);}
+  };
+  const setD=v=>{
+    const cleaned=v.replace(/\D/g,"").slice(0,4);
+    setDigits(cleaned);setErr("");
+    if(cleaned.length===4)submit(cleaned);
+  };
+  return<div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.88)",zIndex:700,display:"flex",alignItems:"center",justifyContent:"center",padding:20}}>
+    <div style={{background:C.surface,border:`2px solid ${C.accent}`,borderRadius:20,padding:"28px 24px 24px",width:"100%",maxWidth:340,textAlign:"center",animation:shake?"shakeX .4s":"none"}}>
+      <div style={{fontSize:42,marginBottom:10}}>🔒</div>
+      <div style={{fontFamily:F,fontWeight:900,fontSize:20,color:C.text,marginBottom:6}}>Enter PIN to exit</div>
+      <div style={{fontSize:12,color:C.muted,marginBottom:20,lineHeight:1.5}}>Compliance View is read-only. Enter the 4-digit PIN to return to the full app.</div>
+      <div style={{display:"flex",gap:8,justifyContent:"center",marginBottom:14}}>
+        {[0,1,2,3].map(i=>{
+          const filled=i<digits.length;
+          return<div key={i} style={{width:46,height:54,borderRadius:10,border:`2px solid ${err?C.danger:filled?C.accent:C.border}`,background:filled?`${C.accent}15`:C.card,display:"flex",alignItems:"center",justifyContent:"center"}}>
+            <div style={{width:14,height:14,borderRadius:"50%",background:filled?C.accent:"transparent"}}/>
+          </div>;
+        })}
+      </div>
+      <input autoFocus type="tel" inputMode="numeric" pattern="[0-9]*" autoComplete="off"
+        value={digits} onChange={e=>setD(e.target.value)}
+        style={{position:"absolute",opacity:0,pointerEvents:"none",width:1,height:1}}/>
+      <input autoFocus type="tel" inputMode="numeric" pattern="[0-9]*" autoComplete="off" maxLength={4}
+        value={digits} onChange={e=>setD(e.target.value)}
+        style={{background:C.bg,color:C.text,border:`1px solid ${C.border}`,borderRadius:10,padding:"12px 16px",fontSize:22,width:"100%",outline:"none",boxSizing:"border-box",textAlign:"center",letterSpacing:".4em",fontFamily:'"SF Mono","Menlo",monospace',fontWeight:900,marginBottom:10}}/>
+      {err&&<div style={{fontSize:12,color:C.danger,fontFamily:F,fontWeight:700,marginBottom:8}}>{err}</div>}
+      {checking&&<div style={{fontSize:11,color:C.muted}}>Checking…</div>}
+      <button onClick={onClose} style={{background:"none",border:"none",color:C.muted,fontSize:12,fontFamily:F,fontWeight:700,cursor:"pointer",padding:"6px 0",marginTop:6}}>Cancel — stay in Compliance View</button>
+    </div>
+    <style>{`@keyframes shakeX{0%,100%{transform:translateX(0)}25%{transform:translateX(-8px)}50%{transform:translateX(8px)}75%{transform:translateX(-6px)}}`}</style>
+  </div>;
+}
+
+// ── Compliance View (full screen, read-only) ──────────────────────────────
+// Wraps RecordsHub with a regulatory categoryFilter, suppresses normal
+// onBack, and adds a top "🔒 COMPLIANCE VIEW" band whose lock button opens
+// the PIN modal. If no PIN is set yet, shows a friendly admin prompt.
+const COMPLIANCE_TYPES=["workplace","prestart","fire","vehicle","handover"];
+
+function ComplianceView({activeMine,user,allMachines,remoteOperators,onExit,onSetupPin}){
+  const[showExit,setShowExit]=useState(false);
+  const pinHash=activeMine?.compliance_pin_hash||null;
+  const isAdmin=user?.role==="admin"||user?.role==="minemanager";
+
+  if(!pinHash)return<div style={{minHeight:"100vh",display:"flex",flexDirection:"column",justifyContent:"center",padding:"36px 22px",textAlign:"center",background:`radial-gradient(ellipse at top, ${C.amber}10, ${C.bg} 60%)`}}>
+    <div style={{fontSize:56,marginBottom:14}}>🔒</div>
+    <div style={{fontFamily:F,fontWeight:900,fontSize:24,color:C.amber,marginBottom:8}}>Compliance View PIN required</div>
+    <div style={{fontSize:13,color:C.muted,lineHeight:1.55,maxWidth:320,margin:"0 auto 22px"}}>Compliance View hands an inspector a read-only view of your records — but it needs a 4-digit PIN so they can't navigate out into the rest of the app.</div>
+    {isAdmin?<button onClick={onSetupPin}
+      style={{width:"100%",maxWidth:300,margin:"0 auto",background:`linear-gradient(135deg,${C.accent},#d4881e)`,color:"#000",border:"none",borderRadius:14,padding:"15px",fontFamily:F,fontWeight:900,fontSize:16,letterSpacing:".04em",cursor:"pointer"}}>Set Compliance PIN →</button>
+    :<div style={{background:`${C.info}10`,border:`1px solid ${C.info}33`,borderRadius:12,padding:"12px 14px",maxWidth:340,margin:"0 auto",fontSize:12,color:C.textSub,lineHeight:1.5}}>Ask your admin to set the PIN in <b style={{color:C.text}}>Setup → Compliance View PIN</b>.</div>}
+    <button onClick={onExit} style={{background:"none",border:"none",color:C.muted,fontSize:13,fontFamily:F,fontWeight:700,cursor:"pointer",marginTop:24}}>← Back to app</button>
+  </div>;
+
+  return<div style={{minHeight:"100vh",display:"flex",flexDirection:"column",background:C.bg}}>
+    {/* Read-only band */}
+    <div style={{flexShrink:0,background:`linear-gradient(90deg, ${C.accent}28, ${C.amber}28)`,borderBottom:`2px solid ${C.accent}88`,padding:"10px 14px",display:"flex",alignItems:"center",gap:10}}>
+      <span style={{fontSize:18}}>🔒</span>
+      <div style={{flex:1,minWidth:0}}>
+        <div style={{fontFamily:F,fontWeight:900,fontSize:12,color:C.accent,letterSpacing:".1em",textTransform:"uppercase"}}>Compliance View · Read only</div>
+        <div style={{fontSize:10,color:C.textSub,marginTop:1}}>{activeMine?.name||"—"} · for inspector / audit handover</div>
+      </div>
+      <button onClick={()=>setShowExit(true)}
+        style={{background:`${C.accent}25`,border:`1px solid ${C.accent}66`,borderRadius:8,padding:"7px 12px",color:C.accent,fontFamily:F,fontWeight:900,fontSize:12,letterSpacing:".04em",cursor:"pointer",flexShrink:0,display:"flex",alignItems:"center",gap:6}}>🔒 Exit</button>
+    </div>
+
+    <div style={{flex:1,overflowY:"auto",WebkitOverflowScrolling:"touch"}}>
+      <RecordsHub activeMine={activeMine} allMachines={allMachines} remoteOperators={remoteOperators}
+        categoryFilter={COMPLIANCE_TYPES} readOnly/>
+    </div>
+
+    {showExit&&<CompliancePinModal mineId={activeMine.id} pinHash={pinHash}
+      onClose={()=>setShowExit(false)} onSuccess={onExit}/>}
+  </div>;
+}
+
+// ── Compliance PIN Setup (admin) ──────────────────────────────────────────
+function CompliancePinSetupScreen({activeMine,onBack,onSaved}){
+  const[pin,setPin]=useState("");
+  const[confirm,setConfirm]=useState("");
+  const[saving,setSaving]=useState(false);
+  const[err,setErr]=useState("");
+  const[saved,setSaved]=useState(false);
+  const hasPin=!!activeMine?.compliance_pin_hash;
+
+  const cleanPin=pin.replace(/\D/g,"").slice(0,4);
+  const cleanConfirm=confirm.replace(/\D/g,"").slice(0,4);
+  const valid=cleanPin.length===4&&cleanPin===cleanConfirm;
+
+  const save=async()=>{
+    if(!valid||saving||!activeMine?.id)return;
+    setSaving(true);setErr("");
+    try{
+      const h=await hashCompliancePin(cleanPin,activeMine.id);
+      const{error}=await supabase.from("mines").update({compliance_pin_hash:h}).eq("id",activeMine.id);
+      if(error)throw error;
+      setSaved(true);setPin("");setConfirm("");
+      onSaved&&onSaved(h);
+      setTimeout(()=>setSaved(false),2500);
+    }catch(e){console.error("save pin:",e);setErr(e.message||"Couldn't save PIN");}
+    finally{setSaving(false);}
+  };
+  const clear=async()=>{
+    if(!confirm("Remove the Compliance PIN? Compliance View will be unusable until a new one is set."))return;
+    setSaving(true);setErr("");
+    try{
+      const{error}=await supabase.from("mines").update({compliance_pin_hash:null}).eq("id",activeMine.id);
+      if(error)throw error;
+      onSaved&&onSaved(null);
+    }catch(e){setErr(e.message||"Couldn't clear PIN");}
+    finally{setSaving(false);}
+  };
+
+  const inp={background:C.surface,color:C.text,border:`1px solid ${C.border}`,borderRadius:10,padding:"14px",fontSize:24,width:"100%",outline:"none",boxSizing:"border-box",textAlign:"center",letterSpacing:".4em",fontFamily:'"SF Mono","Menlo",monospace',fontWeight:900,marginBottom:10};
+
+  return<div style={{paddingBottom:80}}>
+    <PageHdr title="Compliance View PIN" sub="4-digit PIN to exit Compliance View · admin only" back onBack={onBack}/>
+    <div style={{padding:"14px 16px"}}>
+      <div style={{background:`${C.info}08`,border:`1px solid ${C.info}22`,borderRadius:10,padding:"11px 13px",marginBottom:18,fontSize:12,color:C.textSub,lineHeight:1.55}}>
+        <div style={{fontFamily:F,fontWeight:700,color:C.info,fontSize:10,letterSpacing:".06em",textTransform:"uppercase",marginBottom:5}}>How it works</div>
+        Hand the device to an inspector after tapping <b style={{color:C.text}}>Menu → Compliance View</b>. They see a read-only filing cabinet of your regulatory records and nothing else. The 4-digit PIN is required to exit back into the full app — so they can't fiddle with settings or other operators' data.
+      </div>
+
+      <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:14,padding:"16px",marginBottom:14}}>
+        <div style={{fontFamily:F,fontWeight:700,fontSize:11,color:C.muted,letterSpacing:".06em",textTransform:"uppercase",marginBottom:10}}>{hasPin?"Set a new PIN":"Choose a 4-digit PIN"}</div>
+        <input autoFocus type="tel" inputMode="numeric" pattern="[0-9]*" autoComplete="new-password" maxLength={4}
+          value={cleanPin} onChange={e=>setPin(e.target.value)} placeholder="••••" style={{...inp,border:`1px solid ${cleanPin.length===4?C.success:C.border}`}}/>
+        <div style={{fontSize:11,color:C.muted,marginBottom:6,fontFamily:F,fontWeight:700,letterSpacing:".06em",textTransform:"uppercase",textAlign:"center"}}>Confirm</div>
+        <input type="tel" inputMode="numeric" pattern="[0-9]*" autoComplete="new-password" maxLength={4}
+          value={cleanConfirm} onChange={e=>setConfirm(e.target.value)} placeholder="••••" style={{...inp,border:`1px solid ${cleanConfirm&&cleanPin===cleanConfirm?C.success:cleanConfirm?C.danger:C.border}`}}/>
+        {cleanConfirm&&cleanPin!==cleanConfirm&&<div style={{fontSize:11,color:C.danger,marginBottom:8,textAlign:"center"}}>PINs don't match</div>}
+        {err&&<div style={{background:`${C.danger}15`,border:`1px solid ${C.danger}44`,borderRadius:10,padding:"10px 12px",marginBottom:10,fontSize:12,color:C.danger}}>{err}</div>}
+        <button onClick={save} disabled={!valid||saving}
+          style={{width:"100%",background:!valid||saving?C.border:C.success,color:!valid||saving?C.muted:"#000",border:"none",borderRadius:11,padding:"13px",fontFamily:F,fontWeight:900,fontSize:15,letterSpacing:".04em",cursor:valid&&!saving?"pointer":"default",marginTop:4}}>
+          {saving?"Saving…":saved?"✓ Saved":hasPin?"Update PIN":"Save PIN"}
+        </button>
+      </div>
+
+      {hasPin&&<>
+        <div style={{fontSize:10,color:C.danger,fontFamily:F,fontWeight:700,letterSpacing:".1em",textTransform:"uppercase",padding:"4px 4px 8px"}}>Danger zone</div>
+        <div style={{background:`${C.danger}08`,border:`1px solid ${C.danger}33`,borderRadius:12,padding:"14px"}}>
+          <div style={{fontSize:12,color:C.textSub,lineHeight:1.5,marginBottom:10}}>Remove the current PIN. Compliance View will be locked again until a new PIN is set.</div>
+          <button onClick={clear} disabled={saving}
+            style={{width:"100%",background:"transparent",border:`1px solid ${C.danger}55`,borderRadius:10,padding:"11px",color:C.danger,fontFamily:F,fontWeight:700,fontSize:13,cursor:saving?"default":"pointer"}}>Remove PIN</button>
+        </div>
+      </>}
+    </div>
+  </div>;
+}
+
 // ── Extinguisher Locations Admin ──────────────────────────────────────────
 function ExtinguisherLocationsAdminScreen({activeMine,onBack}){
   const[locs,setLocs]=useState([]);
@@ -4856,7 +5030,7 @@ function TodayLeaderboard({activeMine,remoteOperators}){
 // the old SettingsScreen and consolidates Add Machine + VisionLink Sync that
 // used to live as scattered menu items.
 
-function SetupHub({user,activeMine,allMachines,onClose,onNavPlants,onNavWorkplaceAreas,onNavExtinguisherLocations,onNavCheckItemConfig,onNavPeople,onNavShareCode,onAddMachine,onPreshiftHistory}){
+function SetupHub({user,activeMine,allMachines,onClose,onNavPlants,onNavWorkplaceAreas,onNavExtinguisherLocations,onNavCheckItemConfig,onNavPeople,onNavShareCode,onNavCompliancePin,onAddMachine,onPreshiftHistory}){
   const Row=({icon,title,sub,onClick,color=C.text,right})=><button onClick={onClick} style={{width:"100%",background:C.card,border:`1px solid ${C.border}`,borderRadius:12,padding:"14px 15px",marginBottom:8,cursor:"pointer",display:"flex",alignItems:"center",gap:13,textAlign:"left"}}>
     <span style={{fontSize:22,width:30,textAlign:"center",flexShrink:0}}>{icon}</span>
     <div style={{flex:1,minWidth:0}}>
@@ -4881,6 +5055,7 @@ function SetupHub({user,activeMine,allMachines,onClose,onNavPlants,onNavWorkplac
 
       <SectionLabel label="Checks"/>
       <Row icon="📷" title="Check Item Configuration" sub="Toggle photo-required per check item" onClick={onNavCheckItemConfig}/>
+      <Row icon="🔒" title="Compliance View PIN"      sub={activeMine?.compliance_pin_hash?"PIN set · tap to change or remove":"Not set · required for Compliance View"} onClick={onNavCompliancePin}/>
 
       <SectionLabel label="Fleet"/>
       <Row icon="🚛" title="Add Machine"             sub={`${machineCount} machine${machineCount!==1?"s":""} in fleet · add new equipment`} onClick={onAddMachine}/>
@@ -5975,7 +6150,7 @@ function MineOpsApp() {
         if(chosen.mine_id){
           const {data:m,error:mErr}=await supabase
             .from("mines")
-            .select("id,name,code,location,plan,owner_id")
+            .select("id,name,code,location,plan,owner_id,compliance_pin_hash")
             .eq("id",chosen.mine_id)
             .maybeSingle();
           if(!mErr)mineRow=m;
@@ -6092,8 +6267,8 @@ function MineOpsApp() {
   }
   return <div style={{maxWidth:420,margin:"0 auto",height:"100vh",display:"flex",flexDirection:"column",background:C.bg,position:"relative",overflow:"hidden"}}>
     {showSignOut&&<SignOutConfirm onConfirm={handleSignOut} onCancel={()=>setShowSignOut(false)}/>}
-    {menuOpen&&<MenuOverlay user={user} allMachines={allMachines} activeMine={activeMine} onNav={t=>{if(["setup","tickets","reportIssue","ticketDetail","workplaceExam","workplaceAreas","fireInspect","extinguisherLocations","minePicker","account","people","shareCode"].includes(t)){setFlow(t);}else{setTab(t);setFlow("app");}}} onVehicleCheck={()=>setFlow("vehicleCheck")} onClose={()=>setMenuOpen(false)}/>}
-    {user&&!["auth","onboarding","createMine","joinMine","minePicker","subscription","vlSetup","login","app","vehicleCheck","addMachine","setup","plants","inspHistory","extinguisherLocations","workplaceAreas","checkItemConfig","account","people","shareCode"].includes(flow)&&
+    {menuOpen&&<MenuOverlay user={user} allMachines={allMachines} activeMine={activeMine} onNav={t=>{if(["setup","tickets","reportIssue","ticketDetail","workplaceExam","workplaceAreas","fireInspect","extinguisherLocations","minePicker","account","people","shareCode","compliance","compliancePin"].includes(t)){setFlow(t);}else{setTab(t);setFlow("app");}}} onVehicleCheck={()=>setFlow("vehicleCheck")} onClose={()=>setMenuOpen(false)}/>}
+    {user&&!["auth","onboarding","createMine","joinMine","minePicker","subscription","vlSetup","login","app","vehicleCheck","addMachine","setup","plants","inspHistory","extinguisherLocations","workplaceAreas","checkItemConfig","account","people","shareCode","compliance","compliancePin"].includes(flow)&&
       <div style={{flexShrink:0,background:`${C.surface}f2`,backdropFilter:"blur(10px)",borderBottom:`1px solid ${C.border}`,padding:"9px 15px",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
         <div style={{display:"flex",alignItems:"center",gap:10}}>
           <button onClick={()=>setMenuOpen(true)} style={{background:"none",border:`1px solid ${C.border}`,borderRadius:8,padding:"5px 10px",color:C.muted,fontSize:16,cursor:"pointer",lineHeight:1}}>☰</button>
@@ -6111,7 +6286,9 @@ function MineOpsApp() {
     {flow==="machines"&&<div style={{flex:1,overflowY:"auto"}}><MachineSelectScreen allMachines={allMachines} catDemo={catDemo} isAdmin={user?.role==="admin"} activeMine={activeMine} activeShiftId={activeShiftId} user={user} onAddMachine={()=>setFlow("addMachine")} onComplete={()=>setFlow("app")}/></div>}
     {flow==="addMachine"&&<div style={{flex:1,overflowY:"auto"}}><AddMachineScreen allMachines={allMachines} onAdd={handleAddMachine} onBack={()=>setFlow("app")}/></div>}
     {flow==="inspHistory"&&<div style={{flex:1,overflowY:"auto"}}><PreshiftHistoryScreen mineId={activeMine?.id} onBack={()=>setFlow("setup")}/></div>}
-    {flow==="setup"&&<div style={{flex:1,overflowY:"auto"}}><SetupHub user={user} activeMine={activeMine} allMachines={allMachines} onClose={()=>setFlow("app")} onNavPlants={()=>setFlow("plants")} onNavWorkplaceAreas={()=>setFlow("workplaceAreas")} onNavExtinguisherLocations={()=>setFlow("extinguisherLocations")} onNavCheckItemConfig={()=>setFlow("checkItemConfig")} onNavPeople={()=>setFlow("people")} onNavShareCode={()=>setFlow("shareCode")} onAddMachine={()=>setFlow("addMachine")} onPreshiftHistory={()=>setFlow("inspHistory")}/></div>}
+    {flow==="setup"&&<div style={{flex:1,overflowY:"auto"}}><SetupHub user={user} activeMine={activeMine} allMachines={allMachines} onClose={()=>setFlow("app")} onNavPlants={()=>setFlow("plants")} onNavWorkplaceAreas={()=>setFlow("workplaceAreas")} onNavExtinguisherLocations={()=>setFlow("extinguisherLocations")} onNavCheckItemConfig={()=>setFlow("checkItemConfig")} onNavPeople={()=>setFlow("people")} onNavShareCode={()=>setFlow("shareCode")} onNavCompliancePin={()=>setFlow("compliancePin")} onAddMachine={()=>setFlow("addMachine")} onPreshiftHistory={()=>setFlow("inspHistory")}/></div>}
+    {flow==="compliance"&&<div style={{flex:1,overflowY:"auto"}}><ComplianceView activeMine={activeMine} user={user} allMachines={allMachines} remoteOperators={remoteOperators} onExit={()=>setFlow("app")} onSetupPin={()=>setFlow("compliancePin")}/></div>}
+    {flow==="compliancePin"&&<div style={{flex:1,overflowY:"auto"}}><CompliancePinSetupScreen activeMine={activeMine} onBack={()=>setFlow("setup")} onSaved={hash=>setActiveMine(m=>m?{...m,compliance_pin_hash:hash}:m)}/></div>}
     {flow==="people"&&<div style={{flex:1,overflowY:"auto"}}><PeopleScreen activeMine={activeMine} user={user} onBack={()=>setFlow("setup")}/></div>}
     {flow==="shareCode"&&<div style={{flex:1,overflowY:"auto"}}><ShareCodeHub activeMine={activeMine} onBack={()=>setFlow("setup")} onRegenerate={code=>{setActiveMine(m=>m?{...m,code}:m);setProfileBump(n=>n+1);}}/></div>}
     {flow==="account"&&<div style={{flex:1,overflowY:"auto"}}><AccountScreen user={user} activeMine={activeMine} onBack={()=>setFlow("app")} onSignOut={handleSignOut} onProfileChanged={()=>setProfileBump(n=>n+1)}/></div>}
