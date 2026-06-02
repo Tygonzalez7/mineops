@@ -3309,6 +3309,7 @@ function IntelligenceHub(){
 
   return <div style={{paddingBottom:80}} className="up">
     <PageHdr title="Intelligence" sub="Forecasting · efficiency · predictive maintenance"/>
+    <div style={{background:`${C.amber}10`,border:`1px solid ${C.amber}44`,borderRadius:10,padding:"10px 13px",margin:"12px 15px 0",fontSize:11,color:C.amber,fontFamily:F,fontWeight:700,letterSpacing:".02em",lineHeight:1.5}}>⚠ Demo preview — weather, predictive maintenance, and fatigue patterns will be wired to live data in a future release.</div>
     <div style={{padding:"12px 15px"}}>
 
       {/* Weather */}
@@ -3661,6 +3662,7 @@ function ComplianceHub(){
   ];
   return <div style={{paddingBottom:80}} className="up">
     <PageHdr title="Compliance" sub="Training · competency · SDS · records"/>
+    <div style={{background:`${C.amber}10`,border:`1px solid ${C.amber}44`,borderRadius:10,padding:"10px 13px",margin:"12px 15px 0",fontSize:11,color:C.amber,fontFamily:F,fontWeight:700,letterSpacing:".02em",lineHeight:1.5}}>⚠ Demo preview — training records, competent persons, and SDS library will be wired to live tables in a future release. The induction form below is interactive but does not yet persist.</div>
     <div style={{padding:"14px 16px"}}>
       <div style={{background:`${C.info}08`,border:`1px solid ${C.info}22`,borderRadius:10,padding:"9px 12px",marginBottom:14}}>
         <div style={{fontSize:11,color:C.info}}>All records stored securely per mine. Viewable by supervisors and management only. Operators can see their own records.</div>
