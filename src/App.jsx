@@ -4331,9 +4331,6 @@ function CompliancePinModal({mineId,pinHash,onClose,onSuccess}){
           </div>;
         })}
       </div>
-      <input autoFocus type="tel" inputMode="numeric" pattern="[0-9]*" autoComplete="off"
-        value={digits} onChange={e=>setD(e.target.value)}
-        style={{position:"absolute",opacity:0,pointerEvents:"none",width:1,height:1}}/>
       <input autoFocus type="tel" inputMode="numeric" pattern="[0-9]*" autoComplete="off" maxLength={4}
         value={digits} onChange={e=>setD(e.target.value)}
         style={{background:C.bg,color:C.text,border:`1px solid ${C.border}`,borderRadius:10,padding:"12px 16px",fontSize:22,width:"100%",outline:"none",boxSizing:"border-box",textAlign:"center",letterSpacing:".4em",fontFamily:'"SF Mono","Menlo",monospace',fontWeight:900,marginBottom:10}}/>
