@@ -76,9 +76,6 @@ const SITE_AREAS=[
 ];
 const RISK_COL={high:C.danger,medium:C.amber,low:C.success};
 const STATUS_COL={operating:C.success,standby:C.amber,maintenance:C.danger};
-const fmt$=n=>`$${n>=1e6?(n/1e6).toFixed(1)+"M":n>=1000?(n/1000).toFixed(1)+"k":Math.round(n)}`;
-const scGrade=s=>s>=850?C.success:s>=700?C.info:s>=500?"#8b95aa":C.amber;
-
 const CAT_DEMO={
   CAT988K:{sn:"KAT00988K0001",smh:14832,fuel:68,engineTemp:88,status:"operating",  faults:[],utilToday:87},
   CAT992K:{sn:"KAT00992K0002",smh:9211, fuel:45,engineTemp:91,status:"operating",  faults:[{code:"E360",sev:"medium",desc:"Payload overload — check tyre pressure"}],utilToday:79},
@@ -153,15 +150,6 @@ const LIVE_OPS={
 
 
 
-function getCrusherFeed(crusherId){
-  return USERS.filter(u=>u.role==="operator"&&u.crusherAssigned===crusherId&&LIVE_OPS[u.id]?.active).map(u=>{
-    const m=BASE_MACHINES.find(x=>x.id===u.machine),lv=LIVE_OPS[u.id];
-    return{userId:u.id,name:u.name,avatar:u.avatar,machine:m?.model||"?",tph:lv?.tph||0};
-  });
-}
-const C1_FEED=Math.round((287*.87+311*.79+241*.52)/3*1.15);
-const C2_FEED=54;
-
 const DT_CATS={
   rock_jam:    {label:"Rock Stuck",        icon:"🪨",short:"Rock Jam",   fault:false},
   mechanical:  {label:"Mechanical Issue",  icon:"🔧",short:"Mechanical", fault:false},
@@ -175,12 +163,6 @@ const BLASTS=[
   {id:"B1",label:"Pit 1 – Bench 4 North",time:"06:30",dur:45,status:"completed"},
   {id:"B2",label:"Pit 2 – Bench 2 South",time:"10:00",dur:30,status:"completed"},
   {id:"B3",label:"Pit 1 – Bench 3 East", time:"14:00",dur:45,status:"upcoming"},
-];
-const SIZES=[
-  {key:"small", label:"Small", icon:"▪",  pct:70},
-  {key:"medium",label:"Medium",icon:"▪▪", pct:85},
-  {key:"full",  label:"Full",  icon:"▪▪▪",pct:95},
-  {key:"heaped",label:"Heaped",icon:"⬛", pct:108},
 ];
 const MACHINE_TYPES=["Wheel Loader","Excavator","Haul Truck","Dozer","Grader","Water Truck","Other"];
 
@@ -282,8 +264,6 @@ function PhotoViewer({guide,machineType,onClose}){
 }
 
 function CkRow({label,checked,onChange,checkId,machineType,onPhoto}){return <div style={{display:"flex",alignItems:"center",gap:12,padding:"13px 0",borderBottom:`1px solid ${C.border}22`}}><div onClick={()=>onChange(!checked)} style={{width:26,height:26,borderRadius:7,background:checked?C.success:"transparent",border:`2px solid ${checked?C.success:C.border}`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:15,flexShrink:0,transition:"all .15s",cursor:"pointer"}}>{checked?"✓":""}</div><span onClick={()=>onChange(!checked)} style={{fontSize:14,color:checked?C.text:C.textSub,flex:1,lineHeight:1.3,cursor:"pointer"}}>{label}</span>{onPhoto&&<button onClick={e=>{e.stopPropagation();onPhoto(checkId);}} style={{background:`${C.info}18`,border:`1px solid ${C.info}33`,borderRadius:7,padding:"5px 8px",color:C.info,fontSize:14,cursor:"pointer",flexShrink:0,lineHeight:1}} title="View reference photo">📷</button>}</div>}
-function MiniLine({values,color}){const W=80,H=24,mn=Math.min(...values)-2,mx=Math.max(...values)+2;const sx=i=>(i/(values.length-1))*W,sy=v=>H-((v-mn)/(mx-mn))*H;return <svg width={W} height={H} style={{overflow:"visible"}}><polyline points={values.map((v,i)=>`${sx(i)},${sy(v)}`).join(" ")} fill="none" stroke={color} strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round"/><circle cx={sx(values.length-1)} cy={sy(values[values.length-1])} r={2.5} fill={color}/></svg>}
-
 // ── Truck Check (shared by all roles) ────────────────────────────────────
 // ── Vehicle Check Definitions ─────────────────────────────────────────────
 // Sectioned pre-operational inspection. photoEncouraged → big camera CTA
@@ -2103,7 +2083,6 @@ function DiagnosticsScreen({allMachines,catDemo}){
           </div>;
           const isTruck=isMachTruck(m?.type);
           const hist=lim?.history||[];
-          const faultPts=hist.filter(h=>h.fault);
           const safePts=hist.filter(h=>!h.fault);
           const xKey=isTruck?"cycleMin":"tph";
           const xLabel=isTruck?"Cycle Time (min)":"t/hr";
@@ -2554,55 +2533,6 @@ function PlantsAdminScreen({activeMine,onBack}){
   </div>;
 }
 // ── Plant Picker (smart default, tap to change) ───────────────────────────
-function PlantPicker({activeMine,user,value,onChange}){
-  const[plants,setPlants]=useState([]);
-  const[loading,setLoading]=useState(true);
-  const[showList,setShowList]=useState(false);
-  useEffect(()=>{
-    if(!activeMine?.id){setLoading(false);return;}
-    (async()=>{
-      const{data}=await supabase.from("plants").select("*").eq("mine_id",activeMine.id).eq("is_active",true).order("name");
-      const list=data||[];
-      setPlants(list);
-      if(!value&&user?.id&&list.length){
-        const{data:lastShift}=await supabase.from("shifts")
-          .select("plant_id")
-          .eq("operator_id",user.id)
-          .not("plant_id","is",null)
-          .order("shift_start",{ascending:false})
-          .limit(1)
-          .maybeSingle();
-        if(lastShift?.plant_id&&list.find(p=>p.id===lastShift.plant_id))onChange(lastShift.plant_id);
-        else if(list.length===1)onChange(list[0].id);
-      }
-      setLoading(false);
-    })();
-  },[activeMine?.id,user?.id]);
-  if(loading)return null;
-  if(plants.length===0)return null;
-  const current=plants.find(p=>p.id===value);
-  return <div style={{background:C.card,border:`1px solid ${current?C.accent+"55":C.border}`,borderRadius:12,padding:"12px 14px",marginBottom:10}}>
-    <div style={{fontSize:10,color:C.muted,fontFamily:F,fontWeight:700,letterSpacing:".1em",textTransform:"uppercase",marginBottom:6}}>Plant / Processing Line</div>
-    {showList?
-      <div>
-        {plants.map(p=>(
-          <button key={p.id} onClick={()=>{onChange(p.id);setShowList(false);}} style={{width:"100%",background:p.id===value?`${C.accent}18`:"transparent",border:`1px solid ${p.id===value?C.accent:C.border}`,borderRadius:9,padding:"10px 12px",marginBottom:6,color:p.id===value?C.accent:C.text,fontFamily:F,fontWeight:700,fontSize:14,cursor:"pointer",textAlign:"left"}}>
-            {p.name}{p.description&&<div style={{fontSize:11,color:C.muted,fontWeight:400,marginTop:2}}>{p.description}</div>}
-          </button>
-        ))}
-        <button onClick={()=>setShowList(false)} style={{width:"100%",background:"none",border:"none",color:C.muted,padding:6,fontFamily:F,fontWeight:700,fontSize:12,cursor:"pointer"}}>Cancel</button>
-      </div>
-      :
-      <div onClick={()=>setShowList(true)} style={{display:"flex",justifyContent:"space-between",alignItems:"center",cursor:"pointer"}}>
-        <div style={{flex:1}}>
-          <div style={{fontFamily:F,fontWeight:900,fontSize:15,color:current?C.text:C.muted}}>{current?current.name:"Select plant"}</div>
-          {current?.description&&<div style={{fontSize:11,color:C.muted,marginTop:2}}>{current.description}</div>}
-        </div>
-        <div style={{color:C.accent,fontSize:12,fontFamily:F,fontWeight:700}}>{current?"Change":"Pick"} ›</div>
-      </div>
-    }
-  </div>;
-}
 // ── Photo Upload Helper ───────────────────────────────────────────────────
 async function uploadHandoverPhoto(file,mineId,ticketId,stage,userName){
   if(!file||!mineId||!ticketId)return null;
@@ -3366,15 +3296,6 @@ const SHIFT_TIMELINE=[
 ];
 
 // Fuel consumption rates (L/hr) per machine at different production levels
-const FUEL_RATES={
-  CAT988K: [{tph:200,lhr:22},{tph:250,lhr:25},{tph:287,lhr:27.5},{tph:300,lhr:29}],
-  CAT992K: [{tph:250,lhr:31},{tph:300,lhr:35},{tph:311,lhr:36.5},{tph:320,lhr:39}],
-  CAT6060:  [{tph:200,lhr:45},{tph:241,lhr:52},{tph:260,lhr:56},{tph:280,lhr:61}],
-  CAT390F:  [{tph:40, lhr:18},{tph:54, lhr:21},{tph:60, lhr:23}],
-  CAT745_1: [{cycleMin:22,lhr:28},{cycleMin:20,lhr:31},{cycleMin:18.5,lhr:34}],
-  CAT745_2: [{cycleMin:22,lhr:28},{cycleMin:21.2,lhr:30},{cycleMin:19,lhr:33}],
-};
-
 // Predictive maintenance patterns — in production: ML model over accumulated fault+SMH data
 const PREDICTIVE_ALERTS=[
   {machineId:"CAT988K", confidence:78, type:"Hydraulic hose fatigue",
@@ -3761,7 +3682,6 @@ function ComplianceHub(){
     </div>;}
 
   // ── Overview ─────────────────────────────────────────────────────────────────
-  const pendingApproval=0; // in production: count from operators table where status=pending
   const expiringSoon=DEMO_COMPETENT.filter(c=>c.status==="expires-soon").length;
   const sdsNeeded=DEMO_SDS.filter(s=>!s.uploaded).length;
   const TILES=[
@@ -5104,12 +5024,6 @@ function Nav({active,set,role}){
 // ── Login ──────────────────────────────────────────────────────────────────
 // ── Multi-tenant onboarding ────────────────────────────────────────────────
 // Demo mines database — in production this is a Supabase `mines` table
-const DEMO_MINES=[
-  {id:"mine_001",name:"Redrock Quarry",       code:"REDROCK",location:"Queensland, AU",machines:7,operators:12,plan:"pro"},
-  {id:"mine_002",name:"Ironstone Mining Co.", code:"IRON82", location:"Western Australia",machines:4,operators:8, plan:"starter"},
-  {id:"mine_003",name:"Blue Hills Aggregates",code:"BLUE44", location:"New South Wales, AU",machines:5,operators:9, plan:"pro"},
-];
-
 // ── Onboarding (Welcome) ──────────────────────────────────────────────────
 // Shown after sign-up / sign-in when the user has no mine memberships yet.
 // Two big paths: create a new mine or join one via 6-char code.
