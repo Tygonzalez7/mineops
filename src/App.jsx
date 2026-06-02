@@ -1493,6 +1493,7 @@ function ProductionScreen({user,activeMine,activeShiftId,machineId,role,allMachi
   const[simOn,setSimOn]=useState(false);
   const[idleNote,setIdleNote]=useState("");
   const idleRef=useRef(null);
+  const toast=useToast();
   useEffect(()=>()=>clearInterval(idleRef.current),[]);
 
   const{byOperator,lastSync,demoMode}=useDailyProduction({
@@ -1547,8 +1548,32 @@ function ProductionScreen({user,activeMine,activeShiftId,machineId,role,allMachi
   const lastSyncLabel=lastSync?new Date(lastSync).toLocaleTimeString([],{hour:"2-digit",minute:"2-digit",hour12:false}):"—";
 
   const startIdle=()=>{if(simOn)return;setSimOn(true);let m=0;idleRef.current=setInterval(()=>{m++;setIdleMins(m);if(m>=OP.idleAlertMins){setIdleVis(true);clearInterval(idleRef.current);}},400);};
-  const logReason=async cat=>{const now=new Date();const durMin=+idleMins;const dc=DT_CATS[cat];setEvents(p=>[...p,{cat,hrs:+(idleMins/60).toFixed(2),time:`${String(now.getHours()).padStart(2,"0")}:${String(now.getMinutes()).padStart(2,"0")}`,note:idleNote}]);const mid=machineId||user?.machine;if(activeMine?.id&&activeShiftId&&mid){try{const{error}=await supabase.from("downtime_logs").insert({mine_id:activeMine.id,shift_id:activeShiftId,machine_id:mid,category:cat,duration_min:durMin,note:idleNote||null,is_operator_fault:!!(dc&&dc.fault),flagged_for_supervisor:false,logged_at:new Date().toISOString()});if(error)console.error("downtime insert:",error);}catch(e){console.error("downtime exception:",e);}}setIdleVis(false);setSimOn(false);setIdleMins(0);setIdleNote("");clearInterval(idleRef.current);};
-  const flagLater=async()=>{const now=new Date();const durMin=+idleMins;setEvents(p=>[...p,{cat:"other",hrs:+(idleMins/60).toFixed(2),time:`${String(now.getHours()).padStart(2,"0")}:${String(now.getMinutes()).padStart(2,"0")}`,note:"⚠ Reason not recorded — flagged for supervisor",flagged:true}]);const mid=machineId||user?.machine;if(activeMine?.id&&activeShiftId&&mid){try{const{error}=await supabase.from("downtime_logs").insert({mine_id:activeMine.id,shift_id:activeShiftId,machine_id:mid,category:"other",duration_min:durMin,note:"Reason not recorded — flagged for supervisor",is_operator_fault:false,flagged_for_supervisor:true,logged_at:new Date().toISOString()});if(error)console.error("downtime flag insert:",error);}catch(e){console.error("downtime flag exception:",e);}}setIdleVis(false);setSimOn(false);setIdleMins(0);clearInterval(idleRef.current);};
+  const logReason=async cat=>{
+    const now=new Date();const durMin=+idleMins;const dc=DT_CATS[cat];
+    setEvents(p=>[...p,{cat,hrs:+(idleMins/60).toFixed(2),time:`${String(now.getHours()).padStart(2,"0")}:${String(now.getMinutes()).padStart(2,"0")}`,note:idleNote}]);
+    const mid=machineId||user?.machine;
+    if(activeMine?.id&&activeShiftId&&mid){
+      try{
+        const{error}=await supabase.from("downtime_logs").insert({mine_id:activeMine.id,shift_id:activeShiftId,machine_id:mid,category:cat,duration_min:durMin,note:idleNote||null,is_operator_fault:!!(dc&&dc.fault),flagged_for_supervisor:false,logged_at:new Date().toISOString()});
+        if(error){console.error("downtime insert:",error);toast.error(error);}
+        else toast.success(`Downtime logged (${dc?.label||cat})`);
+      }catch(e){console.error("downtime exception:",e);toast.error(e);}
+    }
+    setIdleVis(false);setSimOn(false);setIdleMins(0);setIdleNote("");clearInterval(idleRef.current);
+  };
+  const flagLater=async()=>{
+    const now=new Date();const durMin=+idleMins;
+    setEvents(p=>[...p,{cat:"other",hrs:+(idleMins/60).toFixed(2),time:`${String(now.getHours()).padStart(2,"0")}:${String(now.getMinutes()).padStart(2,"0")}`,note:"⚠ Reason not recorded — flagged for supervisor",flagged:true}]);
+    const mid=machineId||user?.machine;
+    if(activeMine?.id&&activeShiftId&&mid){
+      try{
+        const{error}=await supabase.from("downtime_logs").insert({mine_id:activeMine.id,shift_id:activeShiftId,machine_id:mid,category:"other",duration_min:durMin,note:"Reason not recorded — flagged for supervisor",is_operator_fault:false,flagged_for_supervisor:true,logged_at:new Date().toISOString()});
+        if(error){console.error("downtime flag insert:",error);toast.error(error);}
+        else toast.info("Flagged for supervisor");
+      }catch(e){console.error("downtime flag exception:",e);toast.error(e);}
+    }
+    setIdleVis(false);setSimOn(false);setIdleMins(0);clearInterval(idleRef.current);
+  };
 
   return<div style={{paddingBottom:80}} className="up">
     {endModalOpen&&<EndShiftModal user={user} activeMine={activeMine} activeShiftId={activeShiftId} machine={machine} bucketT={bucketT}
@@ -2898,6 +2923,7 @@ function TicketDetailScreen({ticketId,activeMine,user,allMachines,onBack}){
   const[resolutionNotes,setResolutionNotes]=useState("");
   const[saving,setSaving]=useState(false);
   const fileRef=useRef(null);const camRef=useRef(null);
+  const toast=useToast();
   const load=async()=>{
     setLoading(true);
     const{data:tk}=await supabase.from("handover_tickets").select("*").eq("id",ticketId).maybeSingle();
@@ -2927,10 +2953,12 @@ function TicketDetailScreen({ticketId,activeMine,user,allMachines,onBack}){
       const updates={updated_at:new Date().toISOString()};
       if(newStage==="in_progress"&&ticket.status==="open")updates.status="in_progress";
       if(newStage==="fix"&&ticket.status!=="closed")updates.status="awaiting_verification";
-      await supabase.from("handover_tickets").update(updates).eq("id",ticket.id);
+      const{error:uErr}=await supabase.from("handover_tickets").update(updates).eq("id",ticket.id);
+      if(uErr)throw uErr;
       setNewPhotos([]);setResolutionNotes("");
       await load();
-    }catch(e){console.error(e);}finally{setSaving(false);}
+      toast.success("Update added to ticket");
+    }catch(e){console.error(e);toast.error(e);}finally{setSaving(false);}
   };
   const closeTicket=async(verified)=>{
     if(!confirm(verified?"Mark as fixed and close? You're verifying the issue is resolved.":"Close ticket without verification?"))return;
@@ -2941,15 +2969,17 @@ function TicketDetailScreen({ticketId,activeMine,user,allMachines,onBack}){
         await uploadHandoverPhoto(f,activeMine.id,ticket.id,"verification",user?.name);
       }
       const{data:auth}=await supabase.auth.getUser();
-      await supabase.from("handover_tickets").update({
+      const{error:cErr}=await supabase.from("handover_tickets").update({
         status:"closed",
         closed_by:auth?.user?.id||null,
         closed_by_name:user?.name||null,
         closed_at:new Date().toISOString(),
         resolution_notes:resolutionNotes.trim()||null,
       }).eq("id",ticket.id);
+      if(cErr)throw cErr;
+      toast.success("Ticket closed ✓");
       onBack&&onBack();
-    }catch(e){console.error(e);}finally{setSaving(false);}
+    }catch(e){console.error(e);toast.error(e);}finally{setSaving(false);}
   };
   const stageLabel={original:"Original Issue",in_progress:"In Progress",fix:"Fix Applied",verification:"Verified"};
   const stageColor={original:C.danger,in_progress:C.amber,fix:C.info,verification:C.success};
