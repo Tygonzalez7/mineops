@@ -68,13 +68,6 @@ const PRESTART=[
   {id:"rops",   label:"Seatbelt & ROPS in good condition"},
   {id:"fire",   label:"Fire suppression system — OK"},
 ];
-const SITE_AREAS=[
-  {id:"pit1",   name:"Pit 1 — Active Bench",    zone:"North",      risk:"high",  checks:[{id:"berm",label:"Berm height adequate (≥ half tyre dia.)"},{id:"crest",label:"Crest edge clearly marked"},{id:"road",label:"Haul road clear and trafficable"},{id:"access",label:"Emergency access clear"}]},
-  {id:"pit2",   name:"Pit 2 — Inactive Bench",  zone:"South",      risk:"medium",checks:[{id:"berm",label:"Berm height adequate"},{id:"crest",label:"Crest edge clearly marked"},{id:"access",label:"Emergency access clear"}]},
-  {id:"crusher",name:"Crusher Station",          zone:"Processing", risk:"high",  checks:[{id:"guard",label:"All guards in place"},{id:"estop",label:"Emergency stops functional"},{id:"access",label:"Emergency access clear"}]},
-  {id:"roads",  name:"Haul Roads — Main Circuit",zone:"Site-wide",  risk:"low",   checks:[{id:"berm",label:"Edge berms intact"},{id:"width",label:"Road width adequate"},{id:"road",label:"Road surface trafficable"}]},
-];
-const RISK_COL={high:C.danger,medium:C.amber,low:C.success};
 const STATUS_COL={operating:C.success,standby:C.amber,maintenance:C.danger};
 const CAT_DEMO={
   CAT988K:{sn:"KAT00988K0001",smh:14832,fuel:68,engineTemp:88,status:"operating",  faults:[],utilToday:87},
@@ -1932,32 +1925,6 @@ function MachineCheckScreen({allMachines,catDemo,activeMine,activeShiftId,user})
   </div>;
 }
 
-// ── Site Check ─────────────────────────────────────────────────────────────
-function SiteCheckScreen(){
-  const[sel,setSel]=useState(null);const[checks,setChecks]=useState({});const[done,setDone]=useState({});const[insp,setInsp]=useState("");const[haz,setHaz]=useState("");
-  const count=(id,area)=>area.checks.filter(c=>(checks[id]||{})[c.id]).length;const allDone=(id,area)=>area.checks.every(c=>(checks[id]||{})[c.id]);
-  if(sel){const area=SITE_AREAS.find(a=>a.id===sel),isDone=done[sel],rc=RISK_COL[area.risk],cnt=count(sel,area),can=allDone(sel,area)&&insp;
-    return <div style={{paddingBottom:20}}><PageHdr title={area.name} sub={`${area.zone} · Risk: ${area.risk.toUpperCase()}`} back onBack={()=>setSel(null)}/>
-      {isDone?<div style={{textAlign:"center",padding:"40px 20px"}}><div style={{fontSize:52,marginBottom:10}}>✅</div><div style={{fontFamily:F,fontWeight:900,fontSize:24,color:C.success}}>Area Cleared</div><div style={{fontSize:12,color:C.muted,marginTop:5}}>Inspected by {insp}</div><button onClick={()=>{setDone(p=>({...p,[sel]:false}));setChecks(p=>({...p,[sel]:{}}));setInsp("");setHaz("");}} style={{marginTop:20,background:`${C.accent}22`,border:`1px solid ${C.accent}44`,borderRadius:9,padding:"9px 18px",color:C.accent,fontFamily:F,fontWeight:700,fontSize:13,cursor:"pointer"}}>Re-inspect</button></div>:
-      <div style={{padding:"13px 15px"}}><div style={{background:`${rc}15`,border:`1px solid ${rc}44`,borderRadius:9,padding:"9px 12px",marginBottom:10}}><div style={{fontFamily:F,fontWeight:700,fontSize:11,color:rc}}>RISK: {area.risk.toUpperCase()}</div></div>
-        <div style={{display:"flex",justifyContent:"space-between",fontSize:11,color:C.muted,marginBottom:5}}><span>{cnt} of {area.checks.length}</span><span>{Math.round((cnt/area.checks.length)*100)}%</span></div>
-        <Bar value={cnt} max={area.checks.length} color={cnt===area.checks.length?C.success:C.accent}/>
-        <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:12,padding:"4px 14px",marginTop:13,marginBottom:14}}>{area.checks.map(c=><CkRow key={c.id} label={c.label} checked={(checks[sel]||{})[c.id]||false} onChange={()=>setChecks(p=>({...p,[sel]:{...(p[sel]||{}),[c.id]:!(p[sel]||{})[c.id]}}))}/>)}</div>
-        <div style={{marginBottom:10}}><div style={{fontSize:12,color:C.muted,marginBottom:6}}>Inspector name<span style={{color:C.danger}}> *</span></div><input placeholder="Full name" value={insp} onChange={e=>setInsp(e.target.value)} style={{background:C.surface,color:C.text,border:`1px solid ${insp?C.success:C.border}`,borderRadius:8,padding:"12px 14px",fontSize:14,width:"100%",outline:"none"}}/></div>
-        <div style={{marginBottom:16}}><div style={{fontSize:12,color:C.muted,marginBottom:6}}>Hazards / actions</div><textarea value={haz} onChange={e=>setHaz(e.target.value)} rows={2} placeholder="Note any hazards…" style={{background:C.surface,color:C.text,border:`1px solid ${C.border}`,borderRadius:8,padding:"10px 13px",fontSize:13,width:"100%",outline:"none",resize:"vertical"}}/></div>
-        <button onClick={()=>{if(can)setDone(p=>({...p,[sel]:true}));}} style={{width:"100%",background:can?C.success:C.border,color:can?"#000":C.muted,border:"none",borderRadius:12,padding:"15px",fontFamily:F,fontWeight:900,fontSize:17,cursor:can?"pointer":"default",transition:"background .2s"}}>{can?"✅ SUBMIT AREA CHECK":"Complete all items + inspector name"}</button>
-      </div>}
-    </div>;
-  }
-  const cleared=Object.values(done).filter(Boolean).length;
-  return <div style={{paddingBottom:20}}><PageHdr title="Site Area Check" sub="Mine Code minimum — select area"/>
-    <div style={{padding:"13px 15px"}}><div style={{display:"flex",gap:5,marginBottom:10}}><Stat label="Areas Clear" value={`${cleared}/${SITE_AREAS.length}`} color={C.success}/><Stat label="Pending" value={SITE_AREAS.length-cleared} color={C.amber}/></div><Bar value={cleared} max={SITE_AREAS.length} color={C.success}/>
-      <div style={{marginTop:12}}>{SITE_AREAS.map(area=>{const isDone=done[area.id],cnt=count(area.id,area),rc=RISK_COL[area.risk];return <Card key={area.id} onClick={()=>setSel(area.id)} style={{padding:"13px 14px",border:`1px solid ${isDone?C.success:C.border}`}}><div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:6}}><div><div style={{fontFamily:F,fontWeight:900,fontSize:16}}>{area.name}</div><div style={{fontSize:11,color:C.muted}}>{area.zone} · {area.checks.length} items</div></div><div style={{display:"flex",flexDirection:"column",alignItems:"flex-end",gap:4}}><Pill label={area.risk.toUpperCase()} color={rc}/>{isDone&&<Pill label="✓ CLEAR" color={C.success}/>}</div></div>{isDone?<div style={{fontSize:11,color:C.success}}>✓ All checks passed</div>:cnt>0?<div><div style={{fontSize:10,color:C.muted,marginBottom:3}}>{cnt}/{area.checks.length} checked</div><Bar value={cnt} max={area.checks.length} color={C.accent} thin/></div>:<div style={{fontSize:11,color:C.muted}}>Not yet inspected →</div>}</Card>;})}
-      </div>
-    </div>
-  </div>;
-}
-
 // ── Machine Limits data ───────────────────────────────────────────────────
 const MACHINE_LIMITS={
   CAT745_2:{
@@ -2220,6 +2187,7 @@ function DiagnosticsScreen({allMachines,catDemo}){
 
   return <div style={{paddingBottom:20}}>
     <PageHdr title="Machine Diagnostics" sub="Faults · fluids · limits · CAT VisionLink"/>
+    <div style={{background:`${C.amber}10`,border:`1px solid ${C.amber}44`,borderRadius:10,padding:"10px 13px",margin:"12px 15px 0",fontSize:11,color:C.amber,fontFamily:F,fontWeight:700,letterSpacing:".02em",lineHeight:1.5}}>⚠ Demo preview — pulls real telemetry once VisionLink is connected in Setup → Integrations.</div>
     <div style={{padding:"13px 15px"}}>
       {allMachines.map(m=>{
         const cd=catDemo.find(x=>x.id===m.id),cat=cd?.data,ext=DIAG_EXT[m.id];
@@ -2342,6 +2310,7 @@ function MaintenanceScreen({allMachines}){
 
   return <div style={{paddingBottom:80}} className="up">
     <PageHdr title="Maintenance" sub="SMH-based · VisionLink fluids · log tasks"/>
+    <div style={{background:`${C.amber}10`,border:`1px solid ${C.amber}44`,borderRadius:10,padding:"10px 13px",margin:"12px 15px 0",fontSize:11,color:C.amber,fontFamily:F,fontWeight:700,letterSpacing:".02em",lineHeight:1.5}}>⚠ Demo preview — real maintenance tasks logged via the pre-start gate will show here in a future release.</div>
     <div style={{padding:"12px 15px"}}>
       {totalAlerts>0&&<div style={{background:`${C.danger}12`,border:`1px solid ${C.danger}33`,borderRadius:12,padding:"12px 14px",marginBottom:12,display:"flex",alignItems:"center",gap:12}}><div style={{fontSize:28}}>⚠️</div><div><div style={{fontFamily:F,fontWeight:900,fontSize:16,color:C.danger}}>{totalAlerts} item{totalAlerts!==1?"s":""} need attention</div><div style={{fontSize:11,color:C.muted,marginTop:2}}>Tap a machine to view and log</div></div></div>}
       <div style={{fontFamily:F,fontWeight:700,fontSize:11,color:C.muted,letterSpacing:".08em",textTransform:"uppercase",marginBottom:8}}>🚛 Mobile Fleet</div>
@@ -2382,14 +2351,15 @@ function ChecksHub({allMachines,catDemo,activeMine,activeShiftId,user}){
   const[active,setActive]=useState(null);
   const Bk=()=><button onClick={()=>setActive(null)} style={{margin:"10px 16px 0",background:"none",border:`1px solid ${C.border}`,borderRadius:7,padding:"5px 13px",color:C.muted,fontSize:11,fontFamily:F,fontWeight:700,cursor:"pointer",display:"block"}}>← Back</button>;
   if(active==="machine")    return <div><Bk/><MachineCheckScreen allMachines={allMachines} catDemo={catDemo} activeMine={activeMine} activeShiftId={activeShiftId} user={user}/></div>;
-  if(active==="site")       return <div><Bk/><SiteCheckScreen/></div>;
   if(active==="diag")       return <div><Bk/><DiagnosticsScreen allMachines={allMachines} catDemo={catDemo}/></div>;
   if(active==="maintenance")return <MaintenanceScreen allMachines={allMachines} catDemo={catDemo}/>;
+  // Note: Site Area Check was removed — its data overlaps entirely with
+  // Workplace Exam (which IS persisted to workplace_exams). Use the
+  // Workplace Exam entry in the menu / Today screen instead.
   const MENU=[
-    {id:"maintenance",icon:"🔧",title:"Maintenance",        sub:"Grease · filter blow · scheduled tasks · VisionLink fluids",color:C.accent},
     {id:"machine",    icon:"✅",title:"Daily Machine Check",sub:"HSMP pre-start · MQSHA Reg 2017 minimum",                  color:C.success},
-    {id:"site",       icon:"🗺",title:"Site Area Check",    sub:"Mine Code minimum",                                         color:C.info},
-    {id:"diag",       icon:"⚙", title:"Machine Diagnostics",sub:"Fault codes · fluids · CAT VisionLink",                    color:C.amber},
+    {id:"maintenance",icon:"🔧",title:"Maintenance Log",    sub:"Demo preview · logs from the pre-start gate when wired",  color:C.accent},
+    {id:"diag",       icon:"⚙", title:"Machine Diagnostics",sub:"Demo preview · CAT VisionLink telemetry once connected",   color:C.amber},
   ];
   return <div style={{paddingBottom:80}}><PageHdr title="Checks & Maintenance"/>
     <div style={{padding:"14px 16px"}}>{MENU.map(m=><button key={m.id} onClick={()=>setActive(m.id)} style={{width:"100%",background:C.card,border:`1px solid ${m.color}33`,borderRadius:14,padding:"17px 15px",marginBottom:10,display:"flex",alignItems:"center",gap:13,textAlign:"left",cursor:"pointer"}}><div style={{width:50,height:50,borderRadius:13,background:`${m.color}18`,border:`2px solid ${m.color}33`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:24,flexShrink:0}}>{m.icon}</div><div style={{flex:1}}><div style={{fontFamily:F,fontWeight:900,fontSize:17,color:C.text}}>{m.title}</div><div style={{fontSize:11,color:C.muted,marginTop:2}}>{m.sub}</div></div><span style={{color:C.muted,fontSize:16}}>→</span></button>)}
