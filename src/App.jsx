@@ -756,6 +756,7 @@ function SinglePreStart({machineId,catDemo,allMachines,onDone,activeMine,activeS
   const[photoViewing,setPhotoViewing]=useState(null);
   const[showGate,setShowGate]=useState(false);
   const machineType=m?.type||"Wheel Loader";
+  const toast=useToast();
   const cnt=Object.values(checks).filter(Boolean).length;const allDone=PRESTART.every(c=>checks[c.id]);
   const fuelNum=parseInt(fuel)||0;const fuelOk=fuelNum>=1&&fuelNum<=100&&!fuelErr;const can=allDone&&fuelOk;
   const handleFuel=v=>{setFuel(v);if(v==="")return setFuelErr("");const n=parseInt(v);if(isNaN(n)||n<1||n>100)return setFuelErr("Must be 1–100%");setFuelErr("");};
@@ -767,14 +768,34 @@ function SinglePreStart({machineId,catDemo,allMachines,onDone,activeMine,activeS
     </div>
     <div style={{padding:"12px 16px"}}>
       {cat?.faults?.map((f,i)=><div key={i} style={{display:"flex",gap:8,background:`${f.sev==="high"?C.danger:C.amber}12`,border:`1px solid ${f.sev==="high"?C.danger:C.amber}30`,borderRadius:8,padding:"9px 12px",marginBottom:9}}><span style={{fontFamily:F,fontWeight:900,fontSize:13,color:f.sev==="high"?C.danger:C.amber,flexShrink:0}}>{f.code}</span><span style={{fontSize:12,color:C.textSub}}>{f.desc}</span></div>)}
-      {showGate&&<MaintenanceGate machineId={machineId} allMachines={allMachines} activeMine={activeMine} user={user} onClear={async maintLog=>{if(activeMine?.id&&user?.id&&maintLog?.length){try{const rows=maintLog.map(e=>({mine_id:activeMine.id,machine_id:machineId,task_id:e.item,smh_at_service:e.smh||null,hours_at_service:e.smh||null,technician_name:e.name||user.name||null,supervisor_approved_by:e.supervisor||null,notes:e.choice+(e.date?` booked ${e.date}`:""),logged_at:new Date().toISOString()}));const{error}=await supabase.from("maintenance_logs").insert(rows);if(error)console.error("maint insert:",error);}catch(e){console.error("maint exception:",e);}}onDone({machineId,fuel:parseInt(fuel),maintLog});}} onBack={()=>setShowGate(false)}/>}
+      {showGate&&<MaintenanceGate machineId={machineId} allMachines={allMachines} activeMine={activeMine} user={user} onClear={async maintLog=>{
+        if(activeMine?.id&&user?.id&&maintLog?.length){
+          try{
+            const rows=maintLog.map(e=>({mine_id:activeMine.id,machine_id:machineId,task_id:e.item,smh_at_service:e.smh||null,hours_at_service:e.smh||null,technician_name:e.name||user.name||null,supervisor_approved_by:e.supervisor||null,notes:e.choice+(e.date?` booked ${e.date}`:""),logged_at:new Date().toISOString()}));
+            const{error}=await supabase.from("maintenance_logs").insert(rows);
+            if(error)throw error;
+            toast.success(`Maintenance gate cleared (${maintLog.length} task${maintLog.length!==1?"s":""})`);
+          }catch(e){console.error("maint insert:",e);toast.error(e);}
+        }
+        onDone({machineId,fuel:parseInt(fuel),maintLog});
+      }} onBack={()=>setShowGate(false)}/>}
       {photoViewing&&<PhotoViewer guide={photoViewing} machineType={machineType} onClose={()=>setPhotoViewing(null)}/>}
       <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:12,padding:"4px 14px",marginBottom:14}}>{PRESTART.map(c=>{const tk=machineType==="Haul Truck"?"truck":"loader";const hp=!!(PHOTO_GUIDES[tk]?.[c.id]);return <CkRow key={c.id} label={c.label} checked={!!checks[c.id]} onChange={()=>setChecks(p=>({...p,[c.id]:!p[c.id]}))} checkId={c.id} machineType={machineType} onPhoto={hp?id=>setPhotoViewing(id):null}/>;})}</div>
       <div style={{marginBottom:16}}><div style={{fontSize:12,color:C.muted,marginBottom:6}}>Fuel level at start (%)<span style={{color:C.danger}}> *</span></div>
         <input type="number" placeholder="e.g. 78" value={fuel} onChange={e=>handleFuel(e.target.value)} style={{background:C.surface,color:C.text,border:`1px solid ${fuelErr?C.danger:fuelOk&&fuel?C.success:C.border}`,borderRadius:9,padding:"13px 14px",fontSize:16,width:"100%",outline:"none"}}/>
         {fuelErr&&<div style={{fontSize:11,color:C.danger,marginTop:4}}>{fuelErr}</div>}
       </div>
-      <button onClick={async()=>{if(!can)return;if(activeMine?.id&&activeShiftId&&user?.id){try{const{error}=await supabase.from("prestart_logs").insert({mine_id:activeMine.id,shift_id:activeShiftId,machine_id:machineId,operator_id:user.id,checks_passed:checks,fuel_level:parseInt(fuel)||null,signed_off_at:new Date().toISOString()});if(error)console.error("prestart insert error:",error);else console.log("prestart saved");}catch(e){console.error("prestart exception:",e);}}setShowGate(true);}} style={{width:"100%",background:can?C.success:C.border,color:can?"#000":C.muted,border:"none",borderRadius:12,padding:"16px",fontFamily:F,fontWeight:900,fontSize:18,cursor:can?"pointer":"default",transition:"background .2s"}}>
+      <button onClick={async()=>{
+        if(!can)return;
+        if(activeMine?.id&&activeShiftId&&user?.id){
+          try{
+            const{error}=await supabase.from("prestart_logs").insert({mine_id:activeMine.id,shift_id:activeShiftId,machine_id:machineId,operator_id:user.id,checks_passed:checks,fuel_level:parseInt(fuel)||null,signed_off_at:new Date().toISOString()});
+            if(error)throw error;
+            toast.success(`${m?.model||"Machine"} pre-start saved`);
+          }catch(e){console.error("prestart insert:",e);toast.error(e);}
+        }
+        setShowGate(true);
+      }} style={{width:"100%",background:can?C.success:C.border,color:can?"#000":C.muted,border:"none",borderRadius:12,padding:"16px",fontFamily:F,fontWeight:900,fontSize:18,cursor:can?"pointer":"default",transition:"background .2s"}}>
         {can?`✅  ${m?.model} SIGNED OFF`:"Complete all items + fuel level"}
       </button>
     </div>
