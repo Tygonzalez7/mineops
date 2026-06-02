@@ -18,6 +18,56 @@ function AuthProvider({ children }) {
 }
 function useSupabase() { return useContext(AuthCtx) }
 
+// ── Toasts ────────────────────────────────────────────────────────────────
+// Tiny global toast system. Replaces alert() and surfaces silent insert
+// errors. useToast() returns {success, error, info} — each takes a string
+// (or Error). Toasts auto-dismiss after 4 s. Stack at bottom-centre.
+const ToastCtx = createContext(null)
+function friendlyError(e){
+  const raw=(e?.message||String(e||"")).trim();
+  if(!raw)return"Something went wrong.";
+  // Strip common Postgres / Supabase prefixes that bleed through.
+  const cleaned=raw
+    .replace(/^Error:\s*/i,"")
+    .replace(/^AuthApiError:\s*/i,"")
+    .replace(/^PostgrestError:\s*/i,"")
+    .replace(/^new row violates row-level security policy[^.]*\.?$/i,"You don't have permission to do that.")
+    .replace(/^duplicate key value[^.]*\.?$/i,"That entry already exists.")
+    .replace(/Failed to fetch/i,"Connection problem. Check your network.")
+    .replace(/JWT expired/i,"Session expired. Please sign in again.");
+  return cleaned.length>140?cleaned.slice(0,137)+"…":cleaned;
+}
+function ToastProvider({children}){
+  const [toasts,setToasts]=useState([])
+  const push=(msg,type)=>{
+    if(!msg)return;
+    const id=Date.now()+Math.random();
+    const text=typeof msg==="string"?msg:friendlyError(msg);
+    setToasts(ts=>[...ts,{id,text,type}]);
+    setTimeout(()=>setToasts(ts=>ts.filter(t=>t.id!==id)),type==="error"?5500:3500);
+  };
+  const toast=useMemo(()=>({
+    success:m=>push(m,"success"),
+    error:  m=>push(m,"error"),
+    info:   m=>push(m,"info"),
+  }),[])
+  return <ToastCtx.Provider value={toast}>
+    {children}
+    <div style={{position:"fixed",bottom:78,left:"50%",transform:"translateX(-50%)",zIndex:1200,display:"flex",flexDirection:"column",gap:8,pointerEvents:"none",width:"100%",maxWidth:380,padding:"0 12px"}}>
+      {toasts.map(t=>{
+        const c=t.type==="success"?"#3ecf8e":t.type==="error"?"#e05252":"#4fa3e0";
+        const icon=t.type==="success"?"✓":t.type==="error"?"⚠":"ℹ";
+        return <div key={t.id} role="status" style={{background:"#0d1118ee",border:`1px solid ${c}66`,borderLeft:`3px solid ${c}`,borderRadius:10,padding:"11px 13px",fontFamily:"'Barlow Condensed','Oswald',sans-serif",fontWeight:700,fontSize:13,color:"#e8ecf3",boxShadow:"0 6px 18px rgba(0,0,0,.4)",backdropFilter:"blur(6px)",display:"flex",gap:10,alignItems:"flex-start",pointerEvents:"auto",animation:"toastIn .2s ease",lineHeight:1.45}}>
+          <span style={{color:c,fontSize:15,flexShrink:0,marginTop:1}}>{icon}</span>
+          <span style={{flex:1,wordBreak:"break-word"}}>{t.text}</span>
+        </div>;
+      })}
+    </div>
+    <style>{`@keyframes toastIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}`}</style>
+  </ToastCtx.Provider>
+}
+function useToast(){return useContext(ToastCtx)||{success:()=>{},error:()=>{},info:()=>{}}}
+
 
 
 // ── Design tokens ─────────────────────────────────────────────────────────
@@ -1789,6 +1839,7 @@ function MachineCheckScreen({allMachines,catDemo,activeMine,activeShiftId,user})
   const[submitting,setSubmitting]=useState(false);
   const[refHelp,setRefHelp]=useState(null); // {key, label} for the reference-photo modal
   const overrides=useCheckItemConfig(activeMine);
+  const toast=useToast();
 
   const setPhoto=(mid,key,file)=>setPhotos(p=>({...p,[mid]:{...(p[mid]||{}),[key]:file}}));
   const itemCheckable=(mid,key)=>{
@@ -1878,9 +1929,10 @@ function MachineCheckScreen({allMachines,catDemo,activeMine,activeShiftId,user})
               }
             }
             setDone(p=>({...p,[machineId]:true}));
+            toast.success("Pre-start signed off ✓");
           }catch(e){
             console.error("prestart sign-off:",e);
-            alert("Could not sign off: "+(e.message||e));
+            toast.error(e);
           }finally{setSubmitting(false);}
         }} disabled={!can||submitting}
           style={{width:"100%",background:can&&!submitting?C.success:C.border,color:can&&!submitting?"#000":C.muted,border:"none",borderRadius:12,padding:"15px",fontFamily:F,fontWeight:900,fontSize:18,cursor:can&&!submitting?"pointer":"default",transition:"background .2s"}}>
@@ -2649,6 +2701,7 @@ function CheckItemConfigScreen({activeMine,onBack}){
   const[refresh,setRefresh]=useState(0);
   const overrides=useCheckItemConfig(activeMine,refresh);
   const[saving,setSaving]=useState(null); // key currently saving
+  const toast=useToast();
   const setRequired=async(logType,itemKey,nextVal)=>{
     if(!activeMine?.id)return;
     const k=`${logType}:${itemKey}`;
@@ -2660,7 +2713,8 @@ function CheckItemConfigScreen({activeMine,onBack}){
       },{onConflict:"mine_id,log_type,item_key"});
       if(error)throw error;
       setRefresh(t=>t+1);
-    }catch(e){console.error("config update:",e);alert("Could not save: "+(e.message||e));}
+      toast.success(nextVal?"Photo now required for this item":"Photo no longer required");
+    }catch(e){console.error("config update:",e);toast.error(e);}
     finally{setSaving(null);}
   };
   return<div style={{paddingBottom:80}}>
@@ -5466,6 +5520,7 @@ function PeopleScreen({activeMine,user,onBack}){
     {id:"minemanager",label:"Mine Manager",color:C.purple},
     {id:"admin",label:"Admin",color:C.danger},
   ];
+  const toast=useToast();
   const updateRole=async(op,newRole)=>{
     if(op.role===newRole)return;
     setSaving(op.id);
@@ -5473,18 +5528,20 @@ function PeopleScreen({activeMine,user,onBack}){
       const{error}=await supabase.from("operators").update({role:newRole}).eq("id",op.id);
       if(error)throw error;
       setBump(n=>n+1);
-    }catch(e){console.error(e);alert("Could not change role: "+(e.message||e));}
+      toast.success(`${op.name} is now ${newRole}`);
+    }catch(e){console.error(e);toast.error(e);}
     finally{setSaving(null);}
   };
   const setActive=async(op,nextActive)=>{
-    if(op.id===user?.id&&!nextActive){alert("You can't remove yourself. Ask another admin.");return;}
+    if(op.id===user?.id&&!nextActive){toast.error("You can't remove yourself. Ask another admin.");return;}
     if(!nextActive&&!confirm(`Remove ${op.name} from ${activeMine.name}? Their past records stay; they'll lose access until reactivated.`))return;
     setSaving(op.id);
     try{
       const{error}=await supabase.from("operators").update({is_active:nextActive}).eq("id",op.id);
       if(error)throw error;
       setBump(n=>n+1);
-    }catch(e){console.error(e);alert("Could not "+(nextActive?"reactivate":"remove")+": "+(e.message||e));}
+      toast.success(nextActive?`${op.name} reactivated`:`${op.name} removed from mine`);
+    }catch(e){console.error(e);toast.error(e);}
     finally{setSaving(null);}
   };
   const fmtLast=ts=>{
@@ -6205,5 +6262,5 @@ function MineOpsApp() {
   </div>
 }
 export default function App() {
-  return <AuthProvider><MineOpsApp/></AuthProvider>
+  return <ToastProvider><AuthProvider><MineOpsApp/></AuthProvider></ToastProvider>
 }
