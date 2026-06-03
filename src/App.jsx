@@ -1,5 +1,6 @@
 import { createClient } from '@supabase/supabase-js'
 import {createContext, useContext, useEffect, useMemo, useState, useRef} from "react"
+import {SchedTemplatesScreen, SchedBuilderScreen, ScheduleTabHub} from "./pages/Schedule.jsx"
 const supabase = createClient(import.meta.env.VITE_SUPABASE_URL, import.meta.env.VITE_SUPABASE_ANON_KEY)
 const AuthCtx = createContext(null)
 function AuthProvider({ children }) {
@@ -5024,7 +5025,7 @@ function TodayLeaderboard({activeMine,remoteOperators}){
 // the old SettingsScreen and consolidates Add Machine + VisionLink Sync that
 // used to live as scattered menu items.
 
-function SetupHub({user,activeMine,allMachines,onClose,onNavPlants,onNavWorkplaceAreas,onNavExtinguisherLocations,onNavCheckItemConfig,onNavPeople,onNavShareCode,onNavCompliancePin,onAddMachine,onPreshiftHistory}){
+function SetupHub({user,activeMine,allMachines,onClose,onNavPlants,onNavWorkplaceAreas,onNavExtinguisherLocations,onNavCheckItemConfig,onNavPeople,onNavShareCode,onNavCompliancePin,onAddMachine,onPreshiftHistory,onNavSchedTemplates,onNavSchedBuilder}){
   const Row=({icon,title,sub,onClick,color=C.text,right})=><button onClick={onClick} style={{width:"100%",background:C.card,border:`1px solid ${C.border}`,borderRadius:12,padding:"14px 15px",marginBottom:8,cursor:"pointer",display:"flex",alignItems:"center",gap:13,textAlign:"left"}}>
     <span style={{fontSize:22,width:30,textAlign:"center",flexShrink:0}}>{icon}</span>
     <div style={{flex:1,minWidth:0}}>
@@ -5051,6 +5052,10 @@ function SetupHub({user,activeMine,allMachines,onClose,onNavPlants,onNavWorkplac
       <Row icon="📷" title="Check Item Configuration" sub="Toggle photo-required per check item" onClick={onNavCheckItemConfig}/>
       <Row icon="🔒" title="Compliance View PIN"      sub={activeMine?.compliance_pin_hash?"PIN set · tap to change or remove":"Not set · required for Compliance View"} onClick={onNavCompliancePin}/>
 
+      <SectionLabel label="Scheduling"/>
+      <Row icon="📅" title="Shift Templates"         sub="Define Day, Night, Maintenance shifts · rotation rules" onClick={onNavSchedTemplates}/>
+      <Row icon="🛠" title="Schedule Builder"        sub="Auto-schedule shifts · headcount · conflicts" onClick={onNavSchedBuilder}/>
+
       <SectionLabel label="Fleet"/>
       <Row icon="🚛" title="Add Machine"             sub={`${machineCount} machine${machineCount!==1?"s":""} in fleet · add new equipment`} onClick={onAddMachine}/>
       <Row icon="📋" title="Pre-shift History"       sub="All operator pre-start sign-offs · audit trail"      onClick={onPreshiftHistory}/>
@@ -5076,17 +5081,18 @@ function Nav({active,set,role}){
   // Supervisor / MineManager (lv 2+): mine-wide view.
   const tabs=lv===1
     ?[
-      {id:"today",   icon:"🏠",label:"Today"},
-      {id:"checks",  icon:"✅",label:"Checks"},
-      {id:"ops",     icon:"📈",label:"Production"},
-      {id:"records", icon:"📁",label:"Records"},
+      {id:"today",    icon:"🏠",label:"Today"},
+      {id:"checks",   icon:"✅",label:"Checks"},
+      {id:"ops",      icon:"📈",label:"Prod"},
+      {id:"schedule", icon:"📅",label:"Schedule"},
+      {id:"records",  icon:"📁",label:"Records"},
      ]
     :[
-      {id:"board",   icon:"📡",label:"Live"},
-      {id:"ops",     icon:"📈",label:"Production"},
-      {id:"perf",    icon:"👷",label:"Team"},
-      {id:"records", icon:"📁",label:"Records"},
-      {id:"intel",   icon:"🧠",label:"Intel"},
+      {id:"board",    icon:"📡",label:"Live"},
+      {id:"ops",      icon:"📈",label:"Prod"},
+      {id:"schedule", icon:"📅",label:"Schedule"},
+      {id:"perf",     icon:"👷",label:"Team"},
+      {id:"records",  icon:"📁",label:"Records"},
      ];
   return <div style={{position:"fixed",bottom:0,left:"50%",transform:"translateX(-50%)",width:"100%",maxWidth:420,background:`${C.surface}f5`,backdropFilter:"blur(12px)",borderTop:`1px solid ${C.border}`,display:"flex",zIndex:100}}>
     {tabs.map(t=><button key={t.id} onClick={()=>set(t.id)} style={{flex:1,padding:"9px 0",background:"none",border:"none",color:active===t.id?C.accent:C.muted,display:"flex",flexDirection:"column",alignItems:"center",gap:2,fontSize:active===t.id?10:9,fontFamily:F,fontWeight:active===t.id?700:400,cursor:"pointer",borderTop:active===t.id?`2px solid ${C.accent}`:"2px solid transparent"}}>
@@ -6091,6 +6097,7 @@ function SignOutConfirm({onConfirm,onCancel}){
 
 function MineOpsApp() {
   const { session, authEvent, clearAuthEvent } = useSupabase()
+  const toast=useToast()
   const [user,setUser]=useState(null)
   const [tab,setTab]=useState("board")
   const [flow,setFlow]=useState("auth")
@@ -6200,8 +6207,8 @@ function MineOpsApp() {
   // current tab isn't one this role can see.
   useEffect(()=>{
     if(!user)return;
-    const op=["today","checks","ops","records"];
-    const mgr=["board","ops","perf","records","intel","comply"];
+    const op=["today","checks","ops","schedule","records"];
+    const mgr=["board","ops","schedule","perf","records","intel","comply"];
     const valid=lv===1?op:mgr;
     if(!valid.includes(tab))setTab(lv===1?"today":"board");
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -6251,6 +6258,7 @@ function MineOpsApp() {
     if(tab==="ops")return <ProductionScreen user={user} activeMine={activeMine} activeShiftId={activeShiftId} machineId={user?.machine} role={user?.role} allMachines={allMachines} remoteOperators={remoteOperators} onShiftEnded={()=>setActiveShiftId(null)}/>
     if(tab==="records")return <RecordsHub activeMine={activeMine} allMachines={allMachines} remoteOperators={remoteOperators} onBack={()=>setTab(homeTab)}/>
     if(tab==="checks")return <ChecksHub allMachines={allMachines} catDemo={catDemo} activeMine={activeMine} activeShiftId={activeShiftId} user={user}/>
+    if(tab==="schedule")return <ScheduleTabHub supabase={supabase} toast={toast} activeMine={activeMine} user={user}/>
     if(tab==="perf")return <MachinePerformanceScreen allMachines={allMachines} custPerfData={custPerfData} activeMine={activeMine} remoteOperators={remoteOperators}/>
     if(tab==="intel")return <IntelligenceHub/>
     if(tab==="comply")return <ComplianceHub/>
@@ -6259,7 +6267,7 @@ function MineOpsApp() {
   return <div style={{maxWidth:420,margin:"0 auto",height:"100vh",display:"flex",flexDirection:"column",background:C.bg,position:"relative",overflow:"hidden"}}>
     {showSignOut&&<SignOutConfirm onConfirm={handleSignOut} onCancel={()=>setShowSignOut(false)}/>}
     {menuOpen&&<MenuOverlay user={user} allMachines={allMachines} activeMine={activeMine} onNav={t=>{if(["setup","tickets","reportIssue","ticketDetail","workplaceExam","workplaceAreas","fireInspect","extinguisherLocations","minePicker","account","people","shareCode","compliance","compliancePin"].includes(t)){setFlow(t);}else{setTab(t);setFlow("app");}}} onVehicleCheck={()=>setFlow("vehicleCheck")} onClose={()=>setMenuOpen(false)}/>}
-    {user&&!["auth","onboarding","createMine","joinMine","minePicker","subscription","vlSetup","login","app","vehicleCheck","addMachine","setup","plants","inspHistory","extinguisherLocations","workplaceAreas","checkItemConfig","account","people","shareCode","compliance","compliancePin"].includes(flow)&&
+    {user&&!["auth","onboarding","createMine","joinMine","minePicker","subscription","vlSetup","login","app","vehicleCheck","addMachine","setup","plants","inspHistory","extinguisherLocations","workplaceAreas","checkItemConfig","account","people","shareCode","compliance","compliancePin","schedTemplates","schedBuilder"].includes(flow)&&
       <div style={{flexShrink:0,background:`${C.surface}f2`,backdropFilter:"blur(10px)",borderBottom:`1px solid ${C.border}`,padding:"9px 15px",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
         <div style={{display:"flex",alignItems:"center",gap:10}}>
           <button onClick={()=>setMenuOpen(true)} style={{background:"none",border:`1px solid ${C.border}`,borderRadius:8,padding:"5px 10px",color:C.muted,fontSize:16,cursor:"pointer",lineHeight:1}}>☰</button>
@@ -6277,7 +6285,9 @@ function MineOpsApp() {
     {flow==="machines"&&<div style={{flex:1,overflowY:"auto"}}><MachineSelectScreen allMachines={allMachines} catDemo={catDemo} isAdmin={user?.role==="admin"} activeMine={activeMine} activeShiftId={activeShiftId} user={user} onAddMachine={()=>setFlow("addMachine")} onComplete={()=>setFlow("app")}/></div>}
     {flow==="addMachine"&&<div style={{flex:1,overflowY:"auto"}}><AddMachineScreen allMachines={allMachines} onAdd={handleAddMachine} onBack={()=>setFlow("app")}/></div>}
     {flow==="inspHistory"&&<div style={{flex:1,overflowY:"auto"}}><PreshiftHistoryScreen mineId={activeMine?.id} onBack={()=>setFlow("setup")}/></div>}
-    {flow==="setup"&&<div style={{flex:1,overflowY:"auto"}}><SetupHub user={user} activeMine={activeMine} allMachines={allMachines} onClose={()=>setFlow("app")} onNavPlants={()=>setFlow("plants")} onNavWorkplaceAreas={()=>setFlow("workplaceAreas")} onNavExtinguisherLocations={()=>setFlow("extinguisherLocations")} onNavCheckItemConfig={()=>setFlow("checkItemConfig")} onNavPeople={()=>setFlow("people")} onNavShareCode={()=>setFlow("shareCode")} onNavCompliancePin={()=>setFlow("compliancePin")} onAddMachine={()=>setFlow("addMachine")} onPreshiftHistory={()=>setFlow("inspHistory")}/></div>}
+    {flow==="setup"&&<div style={{flex:1,overflowY:"auto"}}><SetupHub user={user} activeMine={activeMine} allMachines={allMachines} onClose={()=>setFlow("app")} onNavPlants={()=>setFlow("plants")} onNavWorkplaceAreas={()=>setFlow("workplaceAreas")} onNavExtinguisherLocations={()=>setFlow("extinguisherLocations")} onNavCheckItemConfig={()=>setFlow("checkItemConfig")} onNavPeople={()=>setFlow("people")} onNavShareCode={()=>setFlow("shareCode")} onNavCompliancePin={()=>setFlow("compliancePin")} onAddMachine={()=>setFlow("addMachine")} onPreshiftHistory={()=>setFlow("inspHistory")} onNavSchedTemplates={()=>setFlow("schedTemplates")} onNavSchedBuilder={()=>setFlow("schedBuilder")}/></div>}
+    {flow==="schedTemplates"&&<div style={{flex:1,overflowY:"auto"}}><SchedTemplatesScreen supabase={supabase} toast={toast} activeMine={activeMine} user={user} onBack={()=>setFlow("setup")}/></div>}
+    {flow==="schedBuilder"&&<div style={{flex:1,overflowY:"auto"}}><SchedBuilderScreen supabase={supabase} toast={toast} activeMine={activeMine} user={user} remoteOperators={remoteOperators} onBack={()=>setFlow("setup")}/></div>}
     {flow==="compliance"&&<div style={{flex:1,overflowY:"auto"}}><ComplianceView activeMine={activeMine} user={user} allMachines={allMachines} remoteOperators={remoteOperators} onExit={()=>setFlow("app")} onSetupPin={()=>setFlow("compliancePin")}/></div>}
     {flow==="compliancePin"&&<div style={{flex:1,overflowY:"auto"}}><CompliancePinSetupScreen activeMine={activeMine} onBack={()=>setFlow("setup")} onSaved={hash=>setActiveMine(m=>m?{...m,compliance_pin_hash:hash}:m)}/></div>}
     {flow==="people"&&<div style={{flex:1,overflowY:"auto"}}><PeopleScreen activeMine={activeMine} user={user} onBack={()=>setFlow("setup")}/></div>}
