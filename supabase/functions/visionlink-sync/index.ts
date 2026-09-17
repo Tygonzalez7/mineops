@@ -65,11 +65,12 @@ Deno.serve(async (req) => {
     const assets = summary.assetSummaries || [];
 
     // 4. Write to visionlink_cache + update machines
+    // Extra kinds (cycle / payload / fuel / faults) can be fetched later and
+    // stored in visionlink_telemetry without changing this assetSummary path.
     let updated = 0;
     for (const a of assets) {
       const sn = a?.equipmentHeader?.serialNumber;
       if (!sn) continue;
-      const smh = a?.hourMeter?.value ? Math.round(a.hourMeter.value) : null;
 
       // Find the matching machine in this mine by serial number
       const { data: machine } = await supabase
@@ -91,6 +92,14 @@ Deno.serve(async (req) => {
           payload: a,
           fetched_at: new Date().toISOString(),
         }, { onConflict: "machine_id" });
+
+        await supabase.from("visionlink_telemetry").insert({
+          mine_id,
+          machine_id: machine.id,
+          kind: "assetSummary",
+          payload: a,
+          fetched_at: new Date().toISOString(),
+        });
 
         updated++;
       }

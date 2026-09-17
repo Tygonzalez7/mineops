@@ -8,7 +8,7 @@ export default function Onboarding() {
     <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', justifyContent: 'space-between', padding: '44px 22px 36px', background: C.bg }}>
       <div style={{ textAlign: 'center' }}>
         <div style={{ fontFamily: F, fontWeight: 900, fontSize: 54, color: C.accent, letterSpacing: '.06em', marginBottom: 8 }}>MINEOPS</div>
-        <div style={{ fontSize: 11, color: C.muted, letterSpacing: '.18em', textTransform: 'uppercase', marginBottom: 20 }}>Production Intelligence Platform</div>
+        <div style={{ fontSize: 11, color: C.muted, letterSpacing: '.18em', textTransform: 'uppercase', marginBottom: 20 }}>Multi-company production ops</div>
         <div style={{ display: 'flex', justifyContent: 'center', gap: 8, flexWrap: 'wrap' }}>
           {['CAT VisionLink','Powerscreen Pulse','MQSHA / MSHA','Multi-site'].map(t => (
             <div key={t} style={{ background: `${C.accent}12`, border: `1px solid ${C.accent}22`, borderRadius: 6, padding: '3px 10px', fontSize: 10, color: C.accent, fontFamily: F, fontWeight: 700 }}>{t}</div>

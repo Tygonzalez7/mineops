@@ -1,13 +1,13 @@
 import { createClient } from '@supabase/supabase-js'
+import { getConfig } from './config.js'
 
-const supabaseUrl = import.meta.env.VITE_SUPABASE_URL
-const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY
+const { supabaseUrl, supabaseAnonKey } = getConfig()
 
 if (!supabaseUrl || !supabaseAnonKey) {
-  throw new Error('Missing Supabase environment variables. Check your .env file.')
+  console.warn('MineOps: missing VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY (or runtime __MINEOPS_CONFIG__).')
 }
 
-export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
+export const supabase = createClient(supabaseUrl || 'https://example.supabase.co', supabaseAnonKey || 'public-anon-key', {
   auth: {
     persistSession: true,
     autoRefreshToken: true,

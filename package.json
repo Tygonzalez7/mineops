@@ -1,15 +1,19 @@
 {
   "name": "mineops-app",
   "private": true,
-  "version": "0.0.0",
+  "version": "1.0.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "vite build",
     "lint": "eslint .",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "cap:sync": "npm run build && npx cap sync ios"
   },
   "dependencies": {
+    "@capacitor/core": "^7.4.3",
+    "@capacitor/ios": "^7.4.3",
+    "@capgo/capacitor-updater": "^7.0.0",
     "@supabase/supabase-js": "^2.103.0",
     "react": "^19.2.4",
     "react-dom": "^19.2.4",
@@ -24,6 +28,7 @@
     "eslint-plugin-react-hooks": "^7.0.1",
     "eslint-plugin-react-refresh": "^0.5.2",
     "globals": "^17.4.0",
+    "@capacitor/cli": "^7.4.3",
     "vite": "^8.0.4"
   }
 }

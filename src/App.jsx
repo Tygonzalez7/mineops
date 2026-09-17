@@ -1,7 +1,18 @@
 import { createClient } from '@supabase/supabase-js'
 import {createContext, useContext, useEffect, useMemo, useState, useRef} from "react"
 import {SchedTemplatesScreen, SchedBuilderScreen, ScheduleTabHub} from "./pages/Schedule.jsx"
-const supabase = createClient(import.meta.env.VITE_SUPABASE_URL, import.meta.env.VITE_SUPABASE_ANON_KEY)
+import { getConfig, isPlatformAdminEmail } from "./lib/config.js"
+import IntelligenceHubReal from "./pages/real/IntelligenceHub.jsx"
+import ComplianceHubReal from "./pages/real/ComplianceHub.jsx"
+import MaintenanceScreenReal from "./pages/real/MaintenanceScreen.jsx"
+import DiagnosticsScreenReal from "./pages/real/DiagnosticsScreen.jsx"
+import TeamRankings from "./pages/real/TeamRankings.jsx"
+import BillingScreen from "./pages/real/Billing.jsx"
+import PlatformAdmin from "./pages/real/PlatformAdmin.jsx"
+import VisionLinkSetup from "./pages/real/VisionLinkSetup.jsx"
+
+const _cfg = getConfig()
+const supabase = createClient(_cfg.supabaseUrl || import.meta.env.VITE_SUPABASE_URL, _cfg.supabaseAnonKey || import.meta.env.VITE_SUPABASE_ANON_KEY)
 const AuthCtx = createContext(null)
 function AuthProvider({ children }) {
   const [session, setSession] = useState(undefined)
@@ -984,6 +995,9 @@ function LiveBoard({remoteOperators,remoteMachines,activeMine}){
 
 // ── Machine Performance — weekly, machine-first, relative % ranking ─────────
 function MachinePerformanceScreen({allMachines,custPerfData,activeMine,remoteOperators}){
+  return <TeamRankings supabase={supabase} allMachines={allMachines} activeMine={activeMine} remoteOperators={remoteOperators} TodayLeaderboard={<TodayLeaderboard activeMine={activeMine} remoteOperators={remoteOperators}/>}/>
+}
+function MachinePerformanceScreenLegacy({allMachines,custPerfData,activeMine,remoteOperators}){
   const[sel,setSel]=useState(null);
   const cycCol=v=>v<=19?C.success:v<=22?C.accent:C.danger;
   const tphCol=v=>v>=250?C.success:v>=150?C.accent:C.danger;
@@ -2093,7 +2107,10 @@ const MACHINE_LIMITS={
 };
 
 // ── Diagnostics ────────────────────────────────────────────────────────────
-function DiagnosticsScreen({allMachines,catDemo}){
+function DiagnosticsScreen({allMachines,catDemo,activeMine,onSetupVisionLink}){
+  return <DiagnosticsScreenReal supabase={supabase} allMachines={allMachines} activeMine={activeMine} onSetupVisionLink={onSetupVisionLink}/>
+}
+function DiagnosticsScreenLegacy({allMachines,catDemo}){
   const[sel,setSel]=useState(null);const[tab,setTab]=useState("overview");
   if(sel){
     const cd=catDemo.find(x=>x.id===sel),cat=cd?.data,m=allMachines.find(x=>x.id===sel),ext=DIAG_EXT[sel];
@@ -2337,7 +2354,10 @@ const FIXED_TASKS={
   belt:  {label:"Belt Inspection",icon:"⚙", interval:100,unit:"hrs",color:"#3ecf8e"},
 };
 
-function MaintenanceScreen({allMachines}){
+function MaintenanceScreen({allMachines,activeMine,toast}){
+  return <MaintenanceScreenReal supabase={supabase} allMachines={allMachines} activeMine={activeMine} toast={toast}/>
+}
+function MaintenanceScreenLegacy({allMachines}){
   const[view,setView]=useState("overview");
   const[sel,setSel]=useState(null);
   const[log,setLog]=useState([
@@ -2447,18 +2467,16 @@ function MaintenanceScreen({allMachines}){
 
 // ── Checks hub ─────────────────────────────────────────────────────────────
 function ChecksHub({allMachines,catDemo,activeMine,activeShiftId,user}){
+  const toast=useToast();
   const[active,setActive]=useState(null);
   const Bk=()=><button onClick={()=>setActive(null)} style={{margin:"10px 16px 0",background:"none",border:`1px solid ${C.border}`,borderRadius:7,padding:"5px 13px",color:C.muted,fontSize:11,fontFamily:F,fontWeight:700,cursor:"pointer",display:"block"}}>← Back</button>;
   if(active==="machine")    return <div><Bk/><MachineCheckScreen allMachines={allMachines} catDemo={catDemo} activeMine={activeMine} activeShiftId={activeShiftId} user={user}/></div>;
-  if(active==="diag")       return <div><Bk/><DiagnosticsScreen allMachines={allMachines} catDemo={catDemo}/></div>;
-  if(active==="maintenance")return <MaintenanceScreen allMachines={allMachines} catDemo={catDemo}/>;
-  // Note: Site Area Check was removed — its data overlaps entirely with
-  // Workplace Exam (which IS persisted to workplace_exams). Use the
-  // Workplace Exam entry in the menu / Today screen instead.
+  if(active==="diag")       return <div><Bk/><DiagnosticsScreen allMachines={allMachines} catDemo={catDemo} activeMine={activeMine} onSetupVisionLink={()=>window.__mineopsNav&&window.__mineopsNav("vlSetup")}/></div>;
+  if(active==="maintenance")return <MaintenanceScreen allMachines={allMachines} activeMine={activeMine} toast={toast}/>;
   const MENU=[
     {id:"machine",    icon:"✅",title:"Daily Machine Check",sub:"HSMP pre-start · MQSHA Reg 2017 minimum",                  color:C.success},
-    {id:"maintenance",icon:"🔧",title:"Maintenance Log",    sub:"Demo preview · logs from the pre-start gate when wired",  color:C.accent},
-    {id:"diag",       icon:"⚙", title:"Machine Diagnostics",sub:"Demo preview · CAT VisionLink telemetry once connected",   color:C.amber},
+    {id:"maintenance",icon:"🔧",title:"Maintenance Log",    sub:"From pre-start gate · maintenance_logs",                   color:C.accent},
+    {id:"diag",       icon:"⚙", title:"Machine Diagnostics",sub:"CAT VisionLink asset summary from cache",                  color:C.amber},
   ];
   return <div style={{paddingBottom:80}}><PageHdr title="Checks & Maintenance"/>
     <div style={{padding:"14px 16px"}}>{MENU.map(m=><button key={m.id} onClick={()=>setActive(m.id)} style={{width:"100%",background:C.card,border:`1px solid ${m.color}33`,borderRadius:14,padding:"17px 15px",marginBottom:10,display:"flex",alignItems:"center",gap:13,textAlign:"left",cursor:"pointer"}}><div style={{width:50,height:50,borderRadius:13,background:`${m.color}18`,border:`2px solid ${m.color}33`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:24,flexShrink:0}}>{m.icon}</div><div style={{flex:1}}><div style={{fontFamily:F,fontWeight:900,fontSize:17,color:C.text}}>{m.title}</div><div style={{fontSize:11,color:C.muted,marginTop:2}}>{m.sub}</div></div><span style={{color:C.muted,fontSize:16}}>→</span></button>)}
@@ -2470,7 +2488,7 @@ function ChecksHub({allMachines,catDemo,activeMine,activeShiftId,user}){
 
 
 
-function MenuOverlay({user,onNav,onVehicleCheck,onClose,allMachines,activeMine}){
+function MenuOverlay({user,onNav,onVehicleCheck,onClose,allMachines,activeMine,isPlatformAdmin}){
   const lv=ROLES[user?.role]?.level||1;
   const isAdmin=user?.role==="admin"||user?.role==="minemanager";
   const Section=({title,children})=><div style={{marginBottom:6}}>
@@ -2505,14 +2523,14 @@ function MenuOverlay({user,onNav,onVehicleCheck,onClose,allMachines,activeMine})
 
         {lv===1&&<Section title="Quick start">
           <Item icon="🗺" label="Workplace Exam" sub="MSHA · required before shift work" color={C.danger} onClick={()=>{onNav("workplaceExam");onClose();}}/>
-          <Item icon="🧯" label="Fire Extinguishers" sub="MSHA monthly · per location" color="#ec4899" onClick={()=>{onNav("fireInspect");onClose();}}/>
         </Section>}
 
         <Section title="Other">
           <Item icon="🚗" label="Vehicle Check" sub="Company truck / ute inspection" color={C.accent} onClick={()=>{onVehicleCheck();onClose();}}/>
-          {lv>=2&&<Item icon="✅" label="Checks Hub" sub="Pre-start · site area · diagnostics" color={C.success} onClick={()=>{onNav("checks");onClose();}}/>}
-          {lv>=2&&<Item icon="🧯" label="Fire Extinguishers" sub="MSHA monthly inspection" color="#ec4899" onClick={()=>{onNav("fireInspect");onClose();}}/>}
+          {lv>=2&&<Item icon="✅" label="Checks Hub" sub="Pre-start · maintenance · diagnostics" color={C.success} onClick={()=>{onNav("checks");onClose();}}/>}
+          {lv>=2&&<Item icon="🧠" label="Intelligence" sub="Live production · downtime · VisionLink" color={C.purple} onClick={()=>{onNav("intel");onClose();}}/>}
           {lv>=2&&<Item icon="📋" label="Compliance" sub="Training · competent persons · SDS" color={C.info} onClick={()=>{onNav("comply");onClose();}}/>}
+          {lv>=2&&<Item icon="📅" label="Schedule" sub="Roster · templates · trades" color={C.accent} onClick={()=>{onNav("schedule");onClose();}}/>}
         </Section>
 
         <Section title="Mine">
@@ -2522,7 +2540,11 @@ function MenuOverlay({user,onNav,onVehicleCheck,onClose,allMachines,activeMine})
         </Section>
 
         {isAdmin&&<Section title="Admin">
-          <Item icon="⚙" label="Setup" sub="Plants · areas · locations · fleet · integrations" onClick={()=>{onNav("setup");onClose();}}/>
+          <Item icon="⚙" label="Setup" sub="People · fleet · VisionLink · areas" onClick={()=>{onNav("setup");onClose();}}/>
+          <Item icon="💳" label="Billing" sub="Company plan · Stripe (not live)" color={C.accent} onClick={()=>{onNav("billing");onClose();}}/>
+        </Section>}
+        {isPlatformAdmin&&<Section title="Platform">
+          <Item icon="🛡" label="Super-admin" sub="Companies · users · feature flags" color={C.danger} onClick={()=>{onNav("platform");onClose();}}/>
         </Section>}
 
         <div style={{padding:"16px 20px",marginTop:4}}>
@@ -3403,7 +3425,10 @@ const FATIGUE_PATTERNS={
 };
 
 // ── Intelligence Hub (compact — detail views link to pages/) ──────────────
-function IntelligenceHub(){
+function IntelligenceHub({activeMine,allMachines,remoteOperators}){
+  return <IntelligenceHubReal supabase={supabase} activeMine={activeMine} allMachines={allMachines} remoteOperators={remoteOperators}/>
+}
+function IntelligenceHubLegacy(){
   const w=WEATHER_NOW,hot=w.tempC>=33;
   const predHigh=PREDICTIVE_ALERTS.filter(a=>a.confidence>=85).length;
   const shiftTons=Math.round(SHIFT_TIMELINE.filter(p=>!p.idle).reduce((a,p)=>a+(p.u1+p.u2+p.u3+p.u4+p.u7+p.u8)*10/60,0));
@@ -3585,7 +3610,11 @@ const INDUCTION_SECTIONS=[
 
 
 
-function ComplianceHub(){
+function ComplianceHub({activeMine,user}){
+  const toast=useToast();
+  return <ComplianceHubReal supabase={supabase} activeMine={activeMine} user={user} toast={toast}/>
+}
+function ComplianceHubLegacy(){
   const[view,setView]=useState("overview");
   const[selTraining,setSelTraining]=useState(null);
   const[showInductionForm,setShowInductionForm]=useState(false);
@@ -3800,7 +3829,6 @@ const RECORD_TYPES=[
   {id:"prestart",    label:"Pre-Start Inspections",        shortLabel:"Pre-Start",       icon:"✅",color:C.success},
   {id:"workplace",   label:"Workplace Exams",              shortLabel:"Workplace",       icon:"🗺",color:C.info},
   {id:"vehicle",     label:"Vehicle / Truck Checks",       shortLabel:"Vehicle",         icon:"🚗",color:C.purple},
-  {id:"fire",        label:"Fire Extinguisher Inspections",shortLabel:"Fire Ext",        icon:"🧯",color:"#ec4899"},
   {id:"maintenance", label:"Maintenance",                  shortLabel:"Maintenance",     icon:"🔧",color:C.accent},
   {id:"downtime",    label:"Downtime",                     shortLabel:"Downtime",        icon:"⏸️",color:C.amber},
   {id:"handover",    label:"Handover Tickets",             shortLabel:"Handover",        icon:"🎟",color:C.danger},
@@ -3840,8 +3868,8 @@ function RecordsHub({activeMine,allMachines,remoteOperators,onBack,initialType,r
   const[to,setTo]=useState("");
   const[opSearch,setOpSearch]=useState("");
   const[expanded,setExpanded]=useState(null);
-  const[locById,setLocById]=useState({});
-  const[extById,setExtById]=useState({});
+  const[locById]=useState({});
+  const[extById]=useState({});
   const[photosByTicket,setPhotosByTicket]=useState({});
   const[signedUrls,setSignedUrls]=useState({});
   const[lightbox,setLightbox]=useState(null);
@@ -3878,7 +3906,7 @@ function RecordsHub({activeMine,allMachines,remoteOperators,onBack,initialType,r
           if(error){console.warn(`records ${table}:`,error.message);return[];}
           return(data||[]).map(fn).filter(Boolean);
         };
-        const[prestarts,exams,maints,downs,handovers,fires,vehicles,locRes,extRes]=await Promise.all([
+        const[prestarts,exams,maints,downs,handovers,vehicles]=await Promise.all([
           r("prestart_logs","signed_off_at",row=>({
             id:`p_${row.id}`,type:"prestart",ts:new Date(row.signed_off_at).getTime(),iso:row.signed_off_at,
             title:`Pre-start · ${machineLabel(row.machine_id)}`,
@@ -3912,26 +3940,16 @@ function RecordsHub({activeMine,allMachines,remoteOperators,onBack,initialType,r
             subtitle:`${row.status||"open"} · ${(row.description||"").slice(0,80)}`,
             operatorName:row.created_by_name||"—",machineId:row.machine_id,raw:row,
           })),
-          r("fire_extinguisher_inspections","inspected_at",row=>({
-            id:`f_${row.id}`,type:"fire",ts:new Date(row.inspected_at).getTime(),iso:row.inspected_at,
-            title:`Fire ext · ${row.status==="pass"?"PASS":"FAIL"}`,
-            subtitle:row.notes?row.notes.slice(0,80):(row.status==="pass"?"Inspection passed":"⚠ Inspection failed"),
-            operatorName:row.inspector_name||"—",raw:row,
-          })),
           r("vehicle_checks","created_at",row=>({
             id:`v_${row.id}`,type:"vehicle",ts:new Date(row.created_at).getTime(),iso:row.created_at,
             title:`Vehicle · ${row.vehicle_label||"—"}`,
             subtitle:`${row.pass_count||0} pass · ${row.fail_count||0} fail${row.fail_count>0?" ⚠":""}`,
             operatorName:row.operator_name||"—",raw:row,
           })),
-          supabase.from("extinguisher_locations").select("id,name").eq("mine_id",activeMine.id),
-          supabase.from("fire_extinguishers").select("id,serial_number,serial_photo_path,location_id").eq("mine_id",activeMine.id),
         ]);
         if(cancelled)return;
-        const all=[...prestarts,...exams,...maints,...downs,...handovers,...fires,...vehicles].sort((a,b)=>b.ts-a.ts);
+        const all=[...prestarts,...exams,...maints,...downs,...handovers,...vehicles].sort((a,b)=>b.ts-a.ts);
         setRecords(all);
-        if(locRes?.data){const m={};for(const l of locRes.data)m[l.id]=l.name;setLocById(m);}
-        if(extRes?.data){const m={};for(const e of extRes.data)m[e.id]=e;setExtById(m);}
       }catch(e){console.error("records hub:",e);}
       finally{if(!cancelled)setLoading(false);}
     })();
@@ -4100,7 +4118,8 @@ function RecordsHub({activeMine,allMachines,remoteOperators,onBack,initialType,r
         })}
     </>;
   };
-  const renderFire=raw=>{
+  const RenderFire=raw=>{
+    void locById;void extById;
     const locName=raw.location_id?locById[raw.location_id]:null;
     const ext=raw.extinguisher_id?extById[raw.extinguisher_id]:null;
     const photoPath=raw.serial_photo_path||ext?.serial_photo_path;
@@ -4159,7 +4178,6 @@ function RecordsHub({activeMine,allMachines,remoteOperators,onBack,initialType,r
       case"maintenance":return renderMaintenance(rec.raw);
       case"downtime":return renderDowntime(rec.raw);
       case"handover":return renderHandover(rec.raw);
-      case"fire":return renderFire(rec.raw);
       case"vehicle":return renderVehicle(rec.raw);
       default:return<div style={{fontSize:11,color:C.muted}}>Unknown record type.</div>;
     }
@@ -4169,10 +4187,6 @@ function RecordsHub({activeMine,allMachines,remoteOperators,onBack,initialType,r
     setExpanded(willOpen?rec.id:null);
     if(!willOpen)return;
     if(rec.type==="handover")loadHandoverPhotos(rec.raw.id);
-    if(rec.type==="fire"){
-      const p=rec.raw.serial_photo_path||extById[rec.raw.extinguisher_id]?.serial_photo_path;
-      if(p)loadSignedUrl("fire-extinguishers",p);
-    }
   };
 
   const inp={background:C.surface,color:C.text,border:`1px solid ${C.border}`,borderRadius:8,padding:"8px 10px",fontSize:13,outline:"none",fontFamily:"inherit"};
@@ -5025,7 +5039,7 @@ function TodayLeaderboard({activeMine,remoteOperators}){
 // the old SettingsScreen and consolidates Add Machine + VisionLink Sync that
 // used to live as scattered menu items.
 
-function SetupHub({user,activeMine,allMachines,onClose,onNavPlants,onNavWorkplaceAreas,onNavExtinguisherLocations,onNavCheckItemConfig,onNavPeople,onNavShareCode,onNavCompliancePin,onAddMachine,onPreshiftHistory,onNavSchedTemplates,onNavSchedBuilder}){
+function SetupHub({user,activeMine,allMachines,onClose,onNavPlants,onNavWorkplaceAreas,onNavCheckItemConfig,onNavPeople,onNavShareCode,onNavCompliancePin,onAddMachine,onPreshiftHistory,onNavSchedTemplates,onNavSchedBuilder,onNavVisionLink}){
   const Row=({icon,title,sub,onClick,color=C.text,right})=><button onClick={onClick} style={{width:"100%",background:C.card,border:`1px solid ${C.border}`,borderRadius:12,padding:"14px 15px",marginBottom:8,cursor:"pointer",display:"flex",alignItems:"center",gap:13,textAlign:"left"}}>
     <span style={{fontSize:22,width:30,textAlign:"center",flexShrink:0}}>{icon}</span>
     <div style={{flex:1,minWidth:0}}>
@@ -5045,7 +5059,6 @@ function SetupHub({user,activeMine,allMachines,onClose,onNavPlants,onNavWorkplac
 
       <SectionLabel label="Areas & locations"/>
       <Row icon="🗺"  title="Workplace Areas"        sub="MSHA exam areas · pit benches · crusher · roads"     onClick={onNavWorkplaceAreas}/>
-      <Row icon="🧯" title="Extinguisher Locations" sub="Places that have extinguishers · for monthly checks"  onClick={onNavExtinguisherLocations}/>
       <Row icon="🏭" title="Plants"                  sub="Processing lines · crusher + screens + conveyors"    onClick={onNavPlants}/>
 
       <SectionLabel label="Checks"/>
@@ -5061,14 +5074,8 @@ function SetupHub({user,activeMine,allMachines,onClose,onNavPlants,onNavWorkplac
       <Row icon="📋" title="Pre-shift History"       sub="All operator pre-start sign-offs · audit trail"      onClick={onPreshiftHistory}/>
 
       <SectionLabel label="Integrations"/>
+      <Row icon="📡" title="CAT VisionLink" sub="Credentials · asset summary sync · telemetry slots" onClick={onNavVisionLink}/>
       <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:12,padding:"14px 15px",marginBottom:8}}>
-        <div style={{display:"flex",alignItems:"center",gap:13,marginBottom:10}}>
-          <span style={{fontSize:22,width:30,textAlign:"center"}}>📡</span>
-          <div style={{flex:1}}>
-            <div style={{fontFamily:F,fontWeight:700,fontSize:14,color:C.text}}>CAT VisionLink</div>
-            <div style={{fontSize:11,color:C.muted,marginTop:2}}>Fleet telemetry · cycle times · fluids</div>
-          </div>
-        </div>
         <VisionLinkSyncButton activeMine={activeMine}/>
       </div>
     </div>
@@ -5090,8 +5097,8 @@ function Nav({active,set,role}){
     :[
       {id:"board",    icon:"📡",label:"Live"},
       {id:"ops",      icon:"📈",label:"Prod"},
-      {id:"schedule", icon:"📅",label:"Schedule"},
       {id:"perf",     icon:"👷",label:"Team"},
+      {id:"intel",    icon:"🧠",label:"Intel"},
       {id:"records",  icon:"📁",label:"Records"},
      ];
   return <div style={{position:"fixed",bottom:0,left:"50%",transform:"translateX(-50%)",width:"100%",maxWidth:420,background:`${C.surface}f5`,backdropFilter:"blur(12px)",borderTop:`1px solid ${C.border}`,display:"flex",zIndex:100}}>
@@ -5307,21 +5314,33 @@ function ShareCodeScreen({mine,onContinue,onBack,heroTitle="🎉",heroLine="Mine
 // Assumes session exists (onboarding is only reached post-signup).
 function CreateMineFlow({onComplete,onBack}){
   const{session}=useSupabase();
+  const[orgName,setOrgName]=useState("");
   const[mineName,setMineName]=useState("");
   const[location,setLocation]=useState("");
   const[creating,setCreating]=useState(false);
   const[err,setErr]=useState("");
   const[created,setCreated]=useState(null);
   const code=useMemo(()=>{
-    const chars="ABCDEFGHJKLMNPQRSTUVWXYZ23456789"; // skip 0/O/1/I/L
+    const chars="ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
     let out="";for(let i=0;i<6;i++)out+=chars[Math.floor(Math.random()*chars.length)];return out;
   },[]);
 
-  const canCreate=!!(mineName.trim()&&session);
+  const canCreate=!!(orgName.trim()&&mineName.trim()&&session);
   const submit=async()=>{
     if(!canCreate||creating)return;
     setCreating(true);setErr("");
     try{
+      const{data:rpc,error:rpcErr}=await supabase.rpc("create_org_and_mine",{
+        p_org_name:orgName.trim(),
+        p_mine_name:mineName.trim(),
+        p_location:location.trim()||null,
+      });
+      if(!rpcErr&&rpc?.mine){
+        try{localStorage.setItem("mineops:activeMineId",rpc.mine.id);}catch(e){}
+        setCreated(rpc.mine);
+        return;
+      }
+      // Fallback if the SaaS RPC isn't applied yet.
       const{data:mine,error:mineErr}=await supabase.from("mines").insert({
         name:mineName.trim(),
         location:location.trim()||null,
@@ -5349,19 +5368,22 @@ function CreateMineFlow({onComplete,onBack}){
   return<div style={{minHeight:"100vh",display:"flex",flexDirection:"column",padding:"28px 22px"}}>
     <button onClick={onBack} style={{background:"none",border:"none",color:C.muted,fontSize:13,fontFamily:F,fontWeight:700,cursor:"pointer",textAlign:"left",marginBottom:18,padding:0,alignSelf:"flex-start"}}>← Back</button>
     <div style={{marginBottom:22}}>
-      <div style={{fontFamily:F,fontWeight:900,fontSize:28,color:C.accent,letterSpacing:".02em"}}>Create your mine</div>
-      <div style={{fontSize:13,color:C.muted,marginTop:6}}>You'll get a share code once it's created.</div>
+      <div style={{fontFamily:F,fontWeight:900,fontSize:28,color:C.accent,letterSpacing:".02em"}}>Create your company</div>
+      <div style={{fontSize:13,color:C.muted,marginTop:6}}>One company can hold multiple mines. You'll get a share code for this first site.</div>
     </div>
     <form onSubmit={e=>{e.preventDefault();submit();}} style={{flex:1,display:"flex",flexDirection:"column"}}>
-      <div style={{fontSize:11,color:C.muted,marginBottom:5,fontFamily:F,fontWeight:700,letterSpacing:".06em",textTransform:"uppercase"}}>Mine name <span style={{color:C.danger}}>*</span></div>
-      <input autoFocus value={mineName} onChange={e=>setMineName(e.target.value)} placeholder="Redrock Quarry"
+      <div style={{fontSize:11,color:C.muted,marginBottom:5,fontFamily:F,fontWeight:700,letterSpacing:".06em",textTransform:"uppercase"}}>Company name <span style={{color:C.danger}}>*</span></div>
+      <input autoFocus value={orgName} onChange={e=>setOrgName(e.target.value)} placeholder="Redrock Resources"
+        style={{...inp,border:`1px solid ${orgName.trim()?C.success:C.border}`}}/>
+      <div style={{fontSize:11,color:C.muted,marginBottom:5,fontFamily:F,fontWeight:700,letterSpacing:".06em",textTransform:"uppercase"}}>Mine / quarry name <span style={{color:C.danger}}>*</span></div>
+      <input value={mineName} onChange={e=>setMineName(e.target.value)} placeholder="Redrock Quarry"
         style={{...inp,border:`1px solid ${mineName.trim()?C.success:C.border}`}}/>
       <div style={{fontSize:11,color:C.muted,marginBottom:5,fontFamily:F,fontWeight:700,letterSpacing:".06em",textTransform:"uppercase"}}>Location <span style={{color:C.muted,fontWeight:400}}>· optional</span></div>
       <input value={location} onChange={e=>setLocation(e.target.value)} placeholder="Queensland, AU" style={inp}/>
       {err&&<div style={{background:`${C.danger}15`,border:`1px solid ${C.danger}44`,borderRadius:10,padding:"10px 12px",marginBottom:12,fontSize:12,color:C.danger,lineHeight:1.5}}>{err}</div>}
       <button type="submit" disabled={!canCreate||creating}
         style={{width:"100%",background:!canCreate||creating?C.border:`linear-gradient(135deg,${C.accent},#d4881e)`,color:!canCreate||creating?C.muted:"#000",border:"none",borderRadius:14,padding:"17px",fontFamily:F,fontWeight:900,fontSize:18,letterSpacing:".04em",cursor:canCreate&&!creating?"pointer":"default",transition:"all .15s",marginTop:"auto"}}>
-        {creating?"Creating mine…":"Create Mine →"}
+        {creating?"Creating…":"Create company & mine →"}
       </button>
     </form>
   </div>;
@@ -6109,6 +6131,23 @@ function MineOpsApp() {
   const [customCatData,setCustomCatData]=useState([])
   const [custPerfData,setCustPerfData]=useState({})
   const [profileBump,setProfileBump]=useState(0) // re-runs loadProfile after Create/Join
+  const [isPlatformAdmin,setIsPlatformAdmin]=useState(false)
+  useEffect(()=>{
+    if(!session?.user){setIsPlatformAdmin(false);return;}
+    if(isPlatformAdminEmail(session.user.email)){setIsPlatformAdmin(true);return;}
+    let cancelled=false;
+    (async()=>{
+      try{
+        const{data}=await supabase.from("platform_admins").select("id").or(`auth_id.eq.${session.user.id},email.eq.${session.user.email}`).maybeSingle();
+        if(!cancelled)setIsPlatformAdmin(!!data);
+      }catch{if(!cancelled)setIsPlatformAdmin(false);}
+    })();
+    return()=>{cancelled=true;};
+  },[session?.user?.id,session?.user?.email])
+  useEffect(()=>{
+    window.__mineopsNav=(t)=>{if(["setup","vlSetup","billing","platform"].includes(t))setFlow(t);else{setTab(t);setFlow("app");}};
+    return()=>{delete window.__mineopsNav;};
+  },[])
   // Load the user's operator profile + mine whenever session changes.
   // A single auth.uid() can belong to multiple mines (contractor, multi-site).
   // We load all rows, then pick the active mine from localStorage > first.
@@ -6148,7 +6187,7 @@ function MineOpsApp() {
         if(chosen.mine_id){
           const {data:m,error:mErr}=await supabase
             .from("mines")
-            .select("id,name,code,location,plan,owner_id,compliance_pin_hash")
+            .select("id,name,code,location,plan,owner_id,org_id,compliance_pin_hash")
             .eq("id",chosen.mine_id)
             .maybeSingle();
           if(!mErr)mineRow=m;
@@ -6208,10 +6247,9 @@ function MineOpsApp() {
   useEffect(()=>{
     if(!user)return;
     const op=["today","checks","ops","schedule","records"];
-    const mgr=["board","ops","schedule","perf","records","intel","comply"];
+    const mgr=["board","ops","schedule","perf","records","intel","comply","billing"];
     const valid=lv===1?op:mgr;
     if(!valid.includes(tab))setTab(lv===1?"today":"board");
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   },[user?.role])
   const ensureShift=async(truckDriven)=>{
     if(!user?.id||!activeMine?.id||activeShiftId)return activeShiftId;
@@ -6260,14 +6298,15 @@ function MineOpsApp() {
     if(tab==="checks")return <ChecksHub allMachines={allMachines} catDemo={catDemo} activeMine={activeMine} activeShiftId={activeShiftId} user={user}/>
     if(tab==="schedule")return <ScheduleTabHub supabase={supabase} toast={toast} activeMine={activeMine} user={user}/>
     if(tab==="perf")return <MachinePerformanceScreen allMachines={allMachines} custPerfData={custPerfData} activeMine={activeMine} remoteOperators={remoteOperators}/>
-    if(tab==="intel")return <IntelligenceHub/>
-    if(tab==="comply")return <ComplianceHub/>
+    if(tab==="intel")return <IntelligenceHub activeMine={activeMine} allMachines={allMachines} remoteOperators={remoteOperators}/>
+    if(tab==="comply")return <ComplianceHub activeMine={activeMine} user={user}/>
+    if(tab==="billing")return <BillingScreen supabase={supabase} activeMine={activeMine} toast={toast}/>
     return <LiveBoard remoteOperators={remoteOperators} remoteMachines={remoteMachines} activeMine={activeMine}/>
   }
   return <div style={{maxWidth:420,margin:"0 auto",height:"100vh",display:"flex",flexDirection:"column",background:C.bg,position:"relative",overflow:"hidden"}}>
     {showSignOut&&<SignOutConfirm onConfirm={handleSignOut} onCancel={()=>setShowSignOut(false)}/>}
-    {menuOpen&&<MenuOverlay user={user} allMachines={allMachines} activeMine={activeMine} onNav={t=>{if(["setup","tickets","reportIssue","ticketDetail","workplaceExam","workplaceAreas","fireInspect","extinguisherLocations","minePicker","account","people","shareCode","compliance","compliancePin"].includes(t)){setFlow(t);}else{setTab(t);setFlow("app");}}} onVehicleCheck={()=>setFlow("vehicleCheck")} onClose={()=>setMenuOpen(false)}/>}
-    {user&&!["auth","onboarding","createMine","joinMine","minePicker","subscription","vlSetup","login","app","vehicleCheck","addMachine","setup","plants","inspHistory","extinguisherLocations","workplaceAreas","checkItemConfig","account","people","shareCode","compliance","compliancePin","schedTemplates","schedBuilder"].includes(flow)&&
+    {menuOpen&&<MenuOverlay user={user} allMachines={allMachines} activeMine={activeMine} isPlatformAdmin={isPlatformAdmin} onNav={t=>{if(["setup","tickets","reportIssue","ticketDetail","workplaceExam","workplaceAreas","minePicker","account","people","shareCode","compliance","compliancePin","vlSetup","billing","platform"].includes(t)){setFlow(t);}else{setTab(t);setFlow("app");}}} onVehicleCheck={()=>setFlow("vehicleCheck")} onClose={()=>setMenuOpen(false)}/>}
+    {user&&!["auth","onboarding","createMine","joinMine","minePicker","subscription","vlSetup","login","app","vehicleCheck","addMachine","setup","plants","inspHistory","workplaceAreas","checkItemConfig","account","people","shareCode","compliance","compliancePin","schedTemplates","schedBuilder","billing","platform"].includes(flow)&&
       <div style={{flexShrink:0,background:`${C.surface}f2`,backdropFilter:"blur(10px)",borderBottom:`1px solid ${C.border}`,padding:"9px 15px",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
         <div style={{display:"flex",alignItems:"center",gap:10}}>
           <button onClick={()=>setMenuOpen(true)} style={{background:"none",border:`1px solid ${C.border}`,borderRadius:8,padding:"5px 10px",color:C.muted,fontSize:16,cursor:"pointer",lineHeight:1}}>☰</button>
@@ -6285,7 +6324,10 @@ function MineOpsApp() {
     {flow==="machines"&&<div style={{flex:1,overflowY:"auto"}}><MachineSelectScreen allMachines={allMachines} catDemo={catDemo} isAdmin={user?.role==="admin"} activeMine={activeMine} activeShiftId={activeShiftId} user={user} onAddMachine={()=>setFlow("addMachine")} onComplete={()=>setFlow("app")}/></div>}
     {flow==="addMachine"&&<div style={{flex:1,overflowY:"auto"}}><AddMachineScreen allMachines={allMachines} onAdd={handleAddMachine} onBack={()=>setFlow("app")}/></div>}
     {flow==="inspHistory"&&<div style={{flex:1,overflowY:"auto"}}><PreshiftHistoryScreen mineId={activeMine?.id} onBack={()=>setFlow("setup")}/></div>}
-    {flow==="setup"&&<div style={{flex:1,overflowY:"auto"}}><SetupHub user={user} activeMine={activeMine} allMachines={allMachines} onClose={()=>setFlow("app")} onNavPlants={()=>setFlow("plants")} onNavWorkplaceAreas={()=>setFlow("workplaceAreas")} onNavExtinguisherLocations={()=>setFlow("extinguisherLocations")} onNavCheckItemConfig={()=>setFlow("checkItemConfig")} onNavPeople={()=>setFlow("people")} onNavShareCode={()=>setFlow("shareCode")} onNavCompliancePin={()=>setFlow("compliancePin")} onAddMachine={()=>setFlow("addMachine")} onPreshiftHistory={()=>setFlow("inspHistory")} onNavSchedTemplates={()=>setFlow("schedTemplates")} onNavSchedBuilder={()=>setFlow("schedBuilder")}/></div>}
+    {flow==="setup"&&<div style={{flex:1,overflowY:"auto"}}><SetupHub user={user} activeMine={activeMine} allMachines={allMachines} onClose={()=>setFlow("app")} onNavPlants={()=>setFlow("plants")} onNavWorkplaceAreas={()=>setFlow("workplaceAreas")} onNavCheckItemConfig={()=>setFlow("checkItemConfig")} onNavPeople={()=>setFlow("people")} onNavShareCode={()=>setFlow("shareCode")} onNavCompliancePin={()=>setFlow("compliancePin")} onAddMachine={()=>setFlow("addMachine")} onPreshiftHistory={()=>setFlow("inspHistory")} onNavSchedTemplates={()=>setFlow("schedTemplates")} onNavSchedBuilder={()=>setFlow("schedBuilder")} onNavVisionLink={()=>setFlow("vlSetup")}/></div>}
+    {flow==="vlSetup"&&<div style={{flex:1,overflowY:"auto"}}><VisionLinkSetup supabase={supabase} activeMine={activeMine} toast={toast} onBack={()=>setFlow("setup")}/></div>}
+    {flow==="billing"&&<div style={{flex:1,overflowY:"auto"}}><BillingScreen supabase={supabase} activeMine={activeMine} toast={toast} onBack={()=>setFlow("app")}/></div>}
+    {flow==="platform"&&<div style={{flex:1,overflowY:"auto"}}><PlatformAdmin supabase={supabase} session={session} toast={toast} onBack={()=>setFlow("app")}/></div>}
     {flow==="schedTemplates"&&<div style={{flex:1,overflowY:"auto"}}><SchedTemplatesScreen supabase={supabase} toast={toast} activeMine={activeMine} user={user} onBack={()=>setFlow("setup")}/></div>}
     {flow==="schedBuilder"&&<div style={{flex:1,overflowY:"auto"}}><SchedBuilderScreen supabase={supabase} toast={toast} activeMine={activeMine} user={user} remoteOperators={remoteOperators} onBack={()=>setFlow("setup")}/></div>}
     {flow==="compliance"&&<div style={{flex:1,overflowY:"auto"}}><ComplianceView activeMine={activeMine} user={user} allMachines={allMachines} remoteOperators={remoteOperators} onExit={()=>setFlow("app")} onSetupPin={()=>setFlow("compliancePin")}/></div>}
@@ -6295,8 +6337,6 @@ function MineOpsApp() {
     {flow==="account"&&<div style={{flex:1,overflowY:"auto"}}><AccountScreen user={user} activeMine={activeMine} onBack={()=>setFlow("app")} onSignOut={handleSignOut} onProfileChanged={()=>setProfileBump(n=>n+1)}/></div>}
     {flow==="checkItemConfig"&&<div style={{flex:1,overflowY:"auto"}}><CheckItemConfigScreen activeMine={activeMine} onBack={()=>setFlow("setup")}/></div>}
     {flow==="plants"&&<div style={{flex:1,overflowY:"auto"}}><PlantsAdminScreen activeMine={activeMine} onBack={()=>setFlow("setup")}/></div>}
-    {flow==="extinguisherLocations"&&<div style={{flex:1,overflowY:"auto"}}><ExtinguisherLocationsAdminScreen activeMine={activeMine} onBack={()=>setFlow("setup")}/></div>}
-    {flow==="fireInspect"&&<div style={{flex:1,overflowY:"auto"}}><FireExtinguisherInspectScreen activeMine={activeMine} user={user} onBack={()=>setFlow("app")}/></div>}
     {flow==="workplaceExam"&&<div style={{flex:1,overflowY:"auto"}}><WorkplaceExamScreen activeMine={activeMine} activeShiftId={activeShiftId} user={user} onComplete={()=>setFlow("app")} onBack={()=>setFlow("app")}/></div>}
     {flow==="workplaceAreas"&&<div style={{flex:1,overflowY:"auto"}}><WorkplaceAreasAdminScreen activeMine={activeMine} onBack={()=>setFlow("setup")}/></div>}
     {flow==="reportIssue"&&<div style={{flex:1,overflowY:"auto"}}><CreateTicketScreen activeMine={activeMine} activeShiftId={activeShiftId} user={user} allMachines={allMachines} defaultMachineId={user?.machine} onDone={()=>setFlow("tickets")} onBack={()=>setFlow("app")}/></div>}
