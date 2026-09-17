@@ -1,6 +1,19 @@
 import React from 'react'
 import ReactDOM from 'react-dom/client'
 import App from './App.jsx'
+import { Capacitor } from '@capacitor/core'
+import { getConfig } from './lib/config.js'
+
+async function notifyNativeReady() {
+  if (!Capacitor.isNativePlatform() || !getConfig().capgoKey) return
+  try {
+    const { CapacitorUpdater } = await import('@capgo/capacitor-updater')
+    await CapacitorUpdater.notifyAppReady()
+  } catch (e) {
+    console.warn('Capgo updater not ready', e)
+  }
+}
+notifyNativeReady()
 
 // Global CSS animations (keep in sync with index.html inline styles)
 const style = document.createElement('style')

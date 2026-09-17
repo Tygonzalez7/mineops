@@ -1,0 +1,41 @@
+# Web is deployed by Vercel from main.
+# This workflow guards the JS bundle and documents native / OTA steps.
+name: release
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  web:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run build
+      - name: Capacitor sync (no codesign)
+        run: npx cap sync ios
+        continue-on-error: true
+      - name: Capgo OTA (optional)
+        if: ${{ secrets.CAPGO_TOKEN != '' }}
+        env:
+          CAPGO_TOKEN: ${{ secrets.CAPGO_TOKEN }}
+        run: |
+          echo "Upload dist/ to Capgo after native is live. See docs/APP_STORE.md."
+          # npx @capgo/cli bundle upload --channel production
+
+  # IPA / TestFlight: requires a macOS runner + Apple certs in secrets.
+  # Uncomment when Ty adds APP_STORE_CONNECT_API_KEY_* secrets.
+  # ios:
+  #   runs-on: macos-14
+  #   steps:
+  #     - uses: actions/checkout@v4
+  #     - run: npm ci && npm run build && npx cap sync ios
+  #     - name: Archive & upload
+  #       run: echo "Use Xcode or Fastlane pilot — see docs/APP_STORE.md"

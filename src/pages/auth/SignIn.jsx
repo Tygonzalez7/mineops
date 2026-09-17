@@ -4,7 +4,7 @@ import { supabase } from '../../lib/supabase.js'
 import { C, F } from '../../constants/index.js'
 
 export default function SignIn() {
-  const nav = useNavigate()
+  const _nav = useNavigate()
   const [email,   setEmail]   = useState('')
   const [pass,    setPass]    = useState('')
   const [loading, setLoading] = useState(false)

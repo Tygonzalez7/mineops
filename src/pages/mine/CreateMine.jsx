@@ -35,7 +35,7 @@ export default function CreateMine() {
 
   // Step 4 — result
   const [mineCode,  setMineCode]  = useState('')
-  const [mineId,    setMineId]    = useState('')
+  const [_mineId,    setMineId]    = useState('')
 
   const inp = {
     background: C.surface, color: C.text, border: `1px solid ${C.border}`,
