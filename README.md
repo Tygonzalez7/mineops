@@ -27,9 +27,12 @@ Edge Function `visionlink-sync` uses `SUPABASE_URL` + `SUPABASE_SERVICE_ROLE_KEY
 npm install
 npm run dev      # vite
 npm run lint
+npm test         # Vitest unit smoke (no network / no live DB)
 npm run build    # production bundle → dist/
 npm run cap:sync # build + Capacitor iOS sync
 ```
+
+Live E2E against production needs a reachable Supabase project. If `*.supabase.co` does not resolve, use `docs/E2E_CHECKLIST.md` after DNS is restored — do not treat Vercel login as verified. See `docs/TEST_REPORT.md`.
 
 ## Schema migrations
 

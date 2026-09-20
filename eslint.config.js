@@ -35,6 +35,20 @@ export default defineConfig([
     },
   },
   {
+    files: ['**/*.test.js'],
+    languageOptions: {
+      globals: {
+        ...globals.node,
+        describe: 'readonly',
+        it: 'readonly',
+        expect: 'readonly',
+        vi: 'readonly',
+        beforeEach: 'readonly',
+        afterEach: 'readonly',
+      },
+    },
+  },
+  {
     files: ['src/App.jsx', 'src/pages/Schedule.jsx'],
     rules: {
       'no-unused-vars': 'off',

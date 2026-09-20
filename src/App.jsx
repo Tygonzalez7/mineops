@@ -2,6 +2,10 @@ import { createClient } from '@supabase/supabase-js'
 import {createContext, useContext, useEffect, useMemo, useState, useRef} from "react"
 import {SchedTemplatesScreen, SchedBuilderScreen, ScheduleTabHub} from "./pages/Schedule.jsx"
 import { getConfig, isPlatformAdminEmail } from "./lib/config.js"
+import { friendlyError, friendlyAuthError, passwordStrength, isValidEmail, authSubmitDisabled } from "./lib/auth.js"
+import { hashCompliancePin, isValidPin, normalizePin } from "./lib/compliance.js"
+import { resolvePostAuthFlow, shouldAdvanceFlow, navTabsForRole, validTabsForRole, homeTabForRole, postTruckFlow, canSetupCompliancePin } from "./lib/routing.js"
+import { vehicleCheckCounts, vehicleCheckReady } from "./lib/checks.js"
 import IntelligenceHubReal from "./pages/real/IntelligenceHub.jsx"
 import ComplianceHubReal from "./pages/real/ComplianceHub.jsx"
 import MaintenanceScreenReal from "./pages/real/MaintenanceScreen.jsx"
@@ -35,20 +39,6 @@ function useSupabase() { return useContext(AuthCtx) }
 // errors. useToast() returns {success, error, info} — each takes a string
 // (or Error). Toasts auto-dismiss after 4 s. Stack at bottom-centre.
 const ToastCtx = createContext(null)
-function friendlyError(e){
-  const raw=(e?.message||String(e||"")).trim();
-  if(!raw)return"Something went wrong.";
-  // Strip common Postgres / Supabase prefixes that bleed through.
-  const cleaned=raw
-    .replace(/^Error:\s*/i,"")
-    .replace(/^AuthApiError:\s*/i,"")
-    .replace(/^PostgrestError:\s*/i,"")
-    .replace(/^new row violates row-level security policy[^.]*\.?$/i,"You don't have permission to do that.")
-    .replace(/^duplicate key value[^.]*\.?$/i,"That entry already exists.")
-    .replace(/Failed to fetch/i,"Connection problem. Check your network.")
-    .replace(/JWT expired/i,"Session expired. Please sign in again.");
-  return cleaned.length>140?cleaned.slice(0,137)+"…":cleaned;
-}
 function ToastProvider({children}){
   const [toasts,setToasts]=useState([])
   const push=(msg,type)=>{
@@ -422,15 +412,10 @@ function TruckCheckScreen({onComplete,activeMine,activeShiftId,user}){
   const[submitting,setSubmitting]=useState(false);
   const[err,setErr]=useState("");
 
-  const counts={
-    pass:ALL_VEHICLE_ITEMS.filter(i=>items[i.key]?.state==="pass").length,
-    fail:ALL_VEHICLE_ITEMS.filter(i=>items[i.key]?.state==="fail").length,
-    na:  ALL_VEHICLE_ITEMS.filter(i=>items[i.key]?.state==="na").length,
-  };
-  const pending=ALL_VEHICLE_ITEMS.length-counts.pass-counts.fail-counts.na;
-  const failItems=ALL_VEHICLE_ITEMS.filter(i=>items[i.key]?.state==="fail");
-  const failsHaveEvidence=failItems.every(i=>(items[i.key]?.note?.trim()||items[i.key]?.photo));
-  const canReview=pending===0&&vehicleLabel.trim()&&failsHaveEvidence;
+  const itemKeys=ALL_VEHICLE_ITEMS.map(i=>i.key);
+  const counts=vehicleCheckCounts(items,itemKeys);
+  const pending=counts.pending;
+  const canReview=vehicleCheckReady({items,itemKeys,vehicleLabel});
 
   const submit=async()=>{
     if(submitting)return;
@@ -560,7 +545,7 @@ function TruckCheckScreen({onComplete,activeMine,activeShiftId,user}){
         style={{width:"100%",background:canReview?C.success:C.border,color:canReview?"#000":C.muted,border:"none",borderRadius:12,padding:"15px",fontFamily:F,fontWeight:900,fontSize:17,letterSpacing:".04em",cursor:canReview?"pointer":"default"}}>
         {pending>0?`Answer remaining ${pending} item${pending!==1?"s":""}`:
          !vehicleLabel.trim()?"Enter vehicle name":
-         !failsHaveEvidence?"Add note/photo for failed items":
+         pending===0&&vehicleLabel.trim()&&!canReview?"Add note/photo for failed items":
          "Review & Submit →"}
       </button>
     </div>
@@ -4304,14 +4289,6 @@ function RecordsHub({activeMine,allMachines,remoteOperators,onBack,initialType,r
   </div>;
 }
 
-// ── Compliance PIN helper ─────────────────────────────────────────────────
-async function hashCompliancePin(pin,mineId){
-  if(!pin||!mineId)return null;
-  const enc=new TextEncoder().encode(`${mineId}:${pin}`);
-  const buf=await crypto.subtle.digest("SHA-256",enc);
-  return Array.from(new Uint8Array(buf)).map(b=>b.toString(16).padStart(2,"0")).join("");
-}
-
 // ── PIN entry modal (used to exit compliance view) ────────────────────────
 function CompliancePinModal({mineId,pinHash,onClose,onSuccess}){
   const[digits,setDigits]=useState("");
@@ -4366,7 +4343,7 @@ const COMPLIANCE_TYPES=["workplace","prestart","fire","vehicle","handover"];
 function ComplianceView({activeMine,user,allMachines,remoteOperators,onExit,onSetupPin}){
   const[showExit,setShowExit]=useState(false);
   const pinHash=activeMine?.compliance_pin_hash||null;
-  const isAdmin=user?.role==="admin"||user?.role==="minemanager";
+  const isAdmin=canSetupCompliancePin(user?.role);
 
   if(!pinHash)return<div style={{minHeight:"100vh",display:"flex",flexDirection:"column",justifyContent:"center",padding:"36px 22px",textAlign:"center",background:`radial-gradient(ellipse at top, ${C.amber}10, ${C.bg} 60%)`}}>
     <div style={{fontSize:56,marginBottom:14}}>🔒</div>
@@ -4409,9 +4386,9 @@ function CompliancePinSetupScreen({activeMine,onBack,onSaved}){
   const[saved,setSaved]=useState(false);
   const hasPin=!!activeMine?.compliance_pin_hash;
 
-  const cleanPin=pin.replace(/\D/g,"").slice(0,4);
-  const cleanConfirm=confirm.replace(/\D/g,"").slice(0,4);
-  const valid=cleanPin.length===4&&cleanPin===cleanConfirm;
+  const cleanPin=normalizePin(pin);
+  const cleanConfirm=normalizePin(confirm);
+  const valid=isValidPin(cleanPin,cleanConfirm);
 
   const save=async()=>{
     if(!valid||saving||!activeMine?.id)return;
@@ -5083,24 +5060,9 @@ function SetupHub({user,activeMine,allMachines,onClose,onNavPlants,onNavWorkplac
 }
 
 function Nav({active,set,role}){
-  const lv=ROLES[role]?.level||1;
   // Operators (lv 1): focused 4-tab shift workflow.
   // Supervisor / MineManager (lv 2+): mine-wide view.
-  const tabs=lv===1
-    ?[
-      {id:"today",    icon:"🏠",label:"Today"},
-      {id:"checks",   icon:"✅",label:"Checks"},
-      {id:"ops",      icon:"📈",label:"Prod"},
-      {id:"schedule", icon:"📅",label:"Schedule"},
-      {id:"records",  icon:"📁",label:"Records"},
-     ]
-    :[
-      {id:"board",    icon:"📡",label:"Live"},
-      {id:"ops",      icon:"📈",label:"Prod"},
-      {id:"perf",     icon:"👷",label:"Team"},
-      {id:"intel",    icon:"🧠",label:"Intel"},
-      {id:"records",  icon:"📁",label:"Records"},
-     ];
+  const tabs=navTabsForRole(role);
   return <div style={{position:"fixed",bottom:0,left:"50%",transform:"translateX(-50%)",width:"100%",maxWidth:420,background:`${C.surface}f5`,backdropFilter:"blur(12px)",borderTop:`1px solid ${C.border}`,display:"flex",zIndex:100}}>
     {tabs.map(t=><button key={t.id} onClick={()=>set(t.id)} style={{flex:1,padding:"9px 0",background:"none",border:"none",color:active===t.id?C.accent:C.muted,display:"flex",flexDirection:"column",alignItems:"center",gap:2,fontSize:active===t.id?10:9,fontFamily:F,fontWeight:active===t.id?700:400,cursor:"pointer",borderTop:active===t.id?`2px solid ${C.accent}`:"2px solid transparent"}}>
       <span style={{fontSize:17}}>{t.icon}</span>{t.label}
@@ -5527,38 +5489,6 @@ function PreshiftHistoryScreen({mineId,onBack}){
 }
 
 // ── Auth helpers ──────────────────────────────────────────────────────────
-function friendlyAuthError(e){
-  const raw=(e?.message||String(e||"")).toLowerCase();
-  if(raw.includes("invalid login credentials"))return"That email and password don't match.";
-  if(raw.includes("user already registered")||raw.includes("already exists"))return"An account with that email already exists. Sign in instead?";
-  if(raw.includes("email not confirmed"))return"Check your inbox to confirm your email.";
-  if(raw.includes("rate limit"))return"Too many attempts. Try again in a few minutes.";
-  if(raw.includes("password should be")||raw.includes("password is too short"))return"Use at least 8 characters for your password.";
-  if(raw.includes("invalid email"))return"That doesn't look like a valid email.";
-  if(raw.includes("user not found"))return"No account with that email.";
-  if(raw.includes("network")||raw.includes("fetch"))return"Connection problem. Check your network and try again.";
-  // Fallback — strip codes, keep readable text.
-  return e?.message?e.message.replace(/^AuthApiError:\s*/,""):"Something went wrong. Try again.";
-}
-function passwordStrength(pw){
-  if(!pw)return{score:0,label:"",color:C.muted};
-  let s=0;
-  if(pw.length>=8)s++;
-  if(pw.length>=12)s++;
-  if(/[A-Z]/.test(pw)&&/[a-z]/.test(pw))s++;
-  if(/\d/.test(pw))s++;
-  if(/[^\w\s]/.test(pw))s++;
-  const tiers=[
-    {label:"Too short",color:C.danger},
-    {label:"Weak",     color:C.danger},
-    {label:"Fair",     color:C.amber},
-    {label:"Good",     color:C.info},
-    {label:"Strong",   color:C.success},
-    {label:"Excellent",color:C.success},
-  ];
-  return{score:s,...tiers[Math.min(s,tiers.length-1)]};
-}
-function isValidEmail(e){return/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test((e||"").trim());}
 
 // ── Auth Screen ───────────────────────────────────────────────────────────
 // Unified sign-in / sign-up / magic-link / forgot-password / reset-password.
@@ -5914,13 +5844,7 @@ function AuthScreen({forceMode,onResetComplete}){
   const passOk=pass.length>=8;
   const strength=passwordStrength(pass);
   const newPassStrength=passwordStrength(newPass);
-  const submitDisabled=loading||(
-    mode==="signIn"  ? !emailOk||pass.length<6 :
-    mode==="signUp"  ? !emailOk||!passOk||!name.trim() :
-    mode==="magic"   ? !emailOk :
-    mode==="forgot"  ? !emailOk :
-    mode==="reset"   ? newPass.length<8 :
-    true);
+  const submitDisabled=authSubmitDisabled({mode,email,pass,name,newPass,loading});
 
   const submit=async()=>{
     if(submitDisabled)return;
@@ -6165,24 +6089,19 @@ function MineOpsApp() {
           .eq("auth_id",session.user.id);
         if(opErr)throw opErr;
         if(cancelled)return;
-        if(!ops||ops.length===0){
-          // Signed in but no mine memberships → onboarding welcome
+        const preferred=typeof localStorage!=="undefined"?localStorage.getItem("mineops:activeMineId"):null;
+        const decision=resolvePostAuthFlow({session,authEvent,operators:ops,preferredMineId:preferred});
+        if(decision.kind==="no_mine"){
           setUser(null);
-          setFlow(f=>(["auth","onboarding"].includes(f)?"onboarding":f));
+          setFlow(f=>shouldAdvanceFlow(f,"onboarding")?"onboarding":f);
           return;
         }
-        // Pick active mine: localStorage preference > picker (if many) > sole row.
-        const preferred=typeof localStorage!=="undefined"?localStorage.getItem("mineops:activeMineId"):null;
-        let chosen=ops.find(o=>o.mine_id===preferred);
-        if(!chosen){
-          if(ops.length>1){
-            // Multiple memberships and no remembered choice — let the user pick.
-            setUser(null);setActiveMine(null);
-            setFlow(f=>(["auth","onboarding","login"].includes(f)?"minePicker":f));
-            return;
-          }
-          chosen=ops[0];
+        if(decision.kind==="pick_mine"){
+          setUser(null);setActiveMine(null);
+          setFlow(f=>shouldAdvanceFlow(f,"minePicker")?"minePicker":f);
+          return;
         }
+        const chosen=decision.operator;
         let mineRow=null;
         if(chosen.mine_id){
           const {data:m,error:mErr}=await supabase
@@ -6210,7 +6129,7 @@ function MineOpsApp() {
           // Fire-and-forget last_active_at bump (column added in migration 20260526010000).
           try{await supabase.from("operators").update({last_active_at:new Date().toISOString()}).eq("id",chosen.id);}catch(e){/* column may not exist yet */}
         }
-        setFlow(f=>(["auth","onboarding","login","minePicker"].includes(f)?"truckQ":f));
+        setFlow(f=>shouldAdvanceFlow(f,"truckQ")?"truckQ":f);
       }catch(e){console.error("loadProfile failed:",e);}
     }
     loadProfile();
@@ -6246,10 +6165,8 @@ function MineOpsApp() {
   // current tab isn't one this role can see.
   useEffect(()=>{
     if(!user)return;
-    const op=["today","checks","ops","schedule","records"];
-    const mgr=["board","ops","schedule","perf","records","intel","comply","billing"];
-    const valid=lv===1?op:mgr;
-    if(!valid.includes(tab))setTab(lv===1?"today":"board");
+    const valid=validTabsForRole(user.role);
+    if(!valid.includes(tab))setTab(homeTabForRole(user.role));
   },[user?.role])
   const ensureShift=async(truckDriven)=>{
     if(!user?.id||!activeMine?.id||activeShiftId)return activeShiftId;
@@ -6266,7 +6183,7 @@ function MineOpsApp() {
       return data.id;
     }catch(e){console.error("ensureShift failed:",e);return null;}
   }
-  const handleTruck=async drove=>{await ensureShift(drove);if(drove)setFlow("truckCheck");else setFlow(lv===1?"machines":"app")}
+  const handleTruck=async drove=>{await ensureShift(drove);setFlow(postTruckFlow(user?.role,drove))}
   const handleAddMachine=async(machine,catData)=>{
     setCustomMachines(p=>[...p,machine]);
     setCustomCatData(p=>[...p,{id:machine.id,meta:machine,data:catData}]);
@@ -6287,7 +6204,7 @@ function MineOpsApp() {
     }
   }
   const handleSignOut=async()=>{await supabase.auth.signOut();try{localStorage.removeItem("mineops:activeMineId");}catch(e){}setUser(null);setActiveMine(null);setRemoteMachines(null);setRemoteOperators(null);setActiveShiftId(null);setFlow("auth");setTab("today");setShowSignOut(false);setMenuOpen(false);}
-  const homeTab=lv===1?"today":"board";
+  const homeTab=homeTabForRole(user?.role);
   const screen=()=>{
     if(flow==="vehicleCheck")return <TruckCheckScreen onComplete={()=>setFlow("app")} activeMine={activeMine} activeShiftId={activeShiftId} user={user}/>
     if(tab==="today")return <TodayScreen user={user} activeMine={activeMine} activeShiftId={activeShiftId} allMachines={allMachines}
