@@ -50,10 +50,13 @@ export default function TeamRankings({ supabase, activeMine, allMachines, remote
     }
   }, [activeMine?.id, supabase])
 
-  const opName = (id) => (remoteOperators || []).find((o) => o.id === id)?.name || "Operator"
-
   const ranked = useMemo(
-    () => rankFleet(allMachines || [], { prod, scoops, downs, operatorName: opName }),
+    () => rankFleet(allMachines || [], {
+      prod,
+      scoops,
+      downs,
+      operatorName: (id) => (remoteOperators || []).find((o) => o.id === id)?.name || "Operator",
+    }),
     [allMachines, prod, scoops, downs, remoteOperators],
   )
 

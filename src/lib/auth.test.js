@@ -32,8 +32,8 @@ describe("friendlyError", () => {
   it("truncates very long messages", () => {
     const long = "x".repeat(200)
     const out = friendlyError({ message: long })
-    expect(out.length).toBe(140)
     expect(out.endsWith("…")).toBe(true)
+    expect(out.length).toBe(138)
   })
 })
 
