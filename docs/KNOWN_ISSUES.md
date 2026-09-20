@@ -4,6 +4,10 @@ Open items that are not crash-level. Demo intel / compliance / maintenance / dia
 
 ---
 
+## Blocked: live E2E / production auth
+
+- **Supabase DNS** — `hnspwfwdqxkedqnriohu.supabase.co` does not resolve from Vercel or this agent environment (2026-09-20). Signup, login, and every write path against production are **unverified**. Automated tests are unit-only (`npm test`). Manual steps: `docs/E2E_CHECKLIST.md`.
+
 ## Out of band (not this repo)
 
 - **Apple Developer enrollment + App Store submission** — Ty’s Apple account. Repo has Capacitor iOS + `docs/APP_STORE.md`.

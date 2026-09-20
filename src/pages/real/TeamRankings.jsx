@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react"
-import { C, F, daysAgo, initials, isMachTruck } from "../../lib/theme.js"
-import { cycleConsistency, loadsPerHour, productiveHours, rankKey, tonsPerHour, utilizationPct } from "../../lib/performance.js"
+import { C, F, daysAgo } from "../../lib/theme.js"
+import { rankFleet } from "../../lib/performance.js"
 import { EmptyState, Notice, PageHdr, Pill, Stat } from "../../ui/primitives.jsx"
 
 export default function TeamRankings({ supabase, activeMine, allMachines, remoteOperators, TodayLeaderboard }) {
@@ -52,62 +52,10 @@ export default function TeamRankings({ supabase, activeMine, allMachines, remote
 
   const opName = (id) => (remoteOperators || []).find((o) => o.id === id)?.name || "Operator"
 
-  const ranked = useMemo(() => {
-    const machines = allMachines || []
-    return machines.map((m) => {
-      const truck = isMachTruck(m.type)
-      const pRows = prod.filter((r) => r.machine_id === m.id)
-      const sRows = scoops.filter((r) => r.machine_id === m.id)
-      const dRows = downs.filter((r) => r.machine_id === m.id)
-      const byOp = new Map()
-      const touch = (opid) => {
-        if (!byOp.has(opid)) {
-          byOp.set(opid, { operatorId: opid, name: opName(opid), tons: 0, loads: 0, cycles: [], downMin: 0, shifts: new Set() })
-        }
-        return byOp.get(opid)
-      }
-      for (const r of pRows) {
-        const o = touch(r.operator_id)
-        o.tons += Number(r.tonnage || 0)
-        if (r.shift_id) o.shifts.add(r.shift_id)
-      }
-      for (const r of sRows) {
-        const oid = r.operator_id || pRows.find((p) => p.shift_id === r.shift_id)?.operator_id
-        if (!oid) continue
-        const o = touch(oid)
-        o.loads += 1
-        o.tons += Number(r.tonnes || 0)
-        if (r.cycle_time_min) o.cycles.push(Number(r.cycle_time_min))
-        if (r.shift_id) o.shifts.add(r.shift_id)
-      }
-      for (const r of dRows) {
-        const oid = pRows.find((p) => p.shift_id === r.shift_id)?.operator_id
-        if (!oid) continue
-        touch(oid).downMin += Number(r.duration_min || 0)
-      }
-      const ops = [...byOp.values()].map((o) => {
-        const shiftCount = Math.max(o.shifts.size, o.tons > 0 || o.loads > 0 ? 1 : 0)
-        const hours = productiveHours({ shiftHours: 10 * Math.max(1, shiftCount), downtimeMin: o.downMin })
-        const tph = tonsPerHour(o.tons, hours)
-        const lph = loadsPerHour(o.loads, hours)
-        const consistency = cycleConsistency(o.cycles)
-        const utilization = utilizationPct({ shiftHours: 10 * Math.max(1, shiftCount), downtimeMin: o.downMin })
-        return {
-          ...o,
-          avatar: initials(o.name),
-          shifts: shiftCount,
-          tph: Math.round(tph * 10) / 10,
-          loadsPerHour: Math.round(lph * 10) / 10,
-          consistency,
-          utilization,
-          weeklyTons: Math.round(o.tons),
-        }
-      }).filter((o) => o.weeklyTons > 0 || o.loads > 0)
-        .sort((a, b) => rankKey(b, truck) - rankKey(a, truck))
-      return { m, truck, ops }
-    })
-  // eslint-disable-next-line react-hooks/exhaustive-deps -- opName from remoteOperators
-  }, [allMachines, prod, scoops, downs, remoteOperators])
+  const ranked = useMemo(
+    () => rankFleet(allMachines || [], { prod, scoops, downs, operatorName: opName }),
+    [allMachines, prod, scoops, downs, remoteOperators],
+  )
 
   const withData = ranked.filter((r) => r.ops.length > 0)
   const withoutData = ranked.filter((r) => r.ops.length === 0)
